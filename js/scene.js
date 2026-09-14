@@ -575,7 +575,7 @@ export class Terrarium {
   _buildWeather() {
     const rng = makeRng(4242);
     // ละอองฝุ่นลอยในภาชนะ ให้บรรยากาศดูมีชีวิต
-    const dustCount = 140;
+    const dustCount = 110;
     const dustPos = new Float32Array(dustCount * 3);
     this.dustPhase = new Float32Array(dustCount);
     for (let i = 0; i < dustCount; i++) {
@@ -609,7 +609,7 @@ export class Terrarium {
     const rainGeo = new THREE.BufferGeometry();
     rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
     this.rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({
-      color: 0xbfe6f2, size: 0.1, transparent: true, opacity: 0.8,
+      color: 0xd8f2ff, size: 0.17, transparent: true, opacity: 0.85,
       depthWrite: false, sizeAttenuation: true,
     }));
     this.rain.visible = false;
