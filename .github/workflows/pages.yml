@@ -34,7 +34,7 @@ jobs:
           node-version: '22'
 
       - name: รันซิมูเลชันแบบ headless และตรวจ determinism
-        run: node tools/balance-test.mjs 3
+        run: node tools/balance-test.mjs
 
   deploy:
     name: ปล่อยขึ้น GitHub Pages
