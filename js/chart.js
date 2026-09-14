@@ -70,6 +70,7 @@ export class PopulationChart {
       { key: 'plants', label: 'พืช', color: SPECIES_COLORS.plant, min: 20, area: true, weight: 1.05 },
       { key: 'herbivores', label: 'สัตว์กินพืช', color: SPECIES_COLORS.herbivore, min: 10, area: true, weight: 1 },
       { key: 'predators', label: 'ผู้ล่า', color: SPECIES_COLORS.predator, min: 4, area: true, weight: 0.85 },
+      { key: 'fungi', label: 'ผู้ย่อยสลาย', color: SPECIES_COLORS.fungus, min: 10, area: true, weight: 0.9 },
       { key: 'moisture', label: 'ความชื้น', color: SPECIES_COLORS.moisture, min: 1, area: true, weight: 0.75, fixed: 1 },
     ];
     const gap = 7;
@@ -180,7 +181,7 @@ export class PopulationChart {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const label = `${Math.round(best.t)} วิ · พืช ${best.plants} · กินพืช ${best.herbivores} · ผู้ล่า ${best.predators}`;
+    const label = `${Math.round(best.t)} วิ · พืช ${best.plants} · กินพืช ${best.herbivores} · ผู้ล่า ${best.predators} · เห็ดรา ${best.fungi ?? 0}`;
     ctx.font = '11px system-ui, sans-serif';
     const tw = ctx.measureText(label).width + 12;
     const bx = Math.min(Math.max(px - tw / 2, PAD.left), this.w - PAD.right - tw);

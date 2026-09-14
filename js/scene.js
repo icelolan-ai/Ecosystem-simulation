@@ -38,6 +38,10 @@ const PALETTE = {
   predEar: 0x8f3a1e,
   predLeg: 0x8a3f22,
   eye: 0x241610,
+  fungusCap: 0xc9a0dc,
+  fungusCapPale: 0xe3cdf0,
+  fungusStem: 0xf0e4d4,
+  fungusGill: 0x9b7bb0,
 };
 
 /** ใส่ vertex color ให้ geometry หนึ่งชิ้น (ใช้ก่อนรวมชิ้นส่วนเป็นตัวเดียว) */
@@ -516,6 +520,31 @@ export class Terrarium {
     return mergeGeometries(p, false);
   }
 
+  /**
+   * ผู้ย่อยสลาย: กลุ่มเห็ดเล็ก 3 ดอกบนพื้นซาก
+   * ทำเป็นกระจุกเพื่อให้เห็นชัดในระยะกล้องปกติ แม้แต่ละดอกจะเล็กมาก
+   */
+  _fungusGeometry() {
+    const p = [];
+    const caps = [
+      { x: 0, z: 0, h: 0.3, r: 0.17 },
+      { x: 0.14, z: 0.09, h: 0.2, r: 0.12 },
+      { x: -0.11, z: 0.13, h: 0.15, r: 0.1 },
+    ];
+    for (const c of caps) {
+      p.push(part(new THREE.CylinderGeometry(0.028, 0.042, c.h, 6), PALETTE.fungusStem,
+        { pos: [c.x, c.h / 2, c.z] }));
+      // หมวกเห็ดทำจากครึ่งทรงกลม
+      const cap = new THREE.SphereGeometry(c.r, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55);
+      cap.scale(1, 0.72, 1);
+      cap.translate(c.x, c.h, c.z);
+      p.push(tint(cap, PALETTE.fungusCap));
+      p.push(part(new THREE.CylinderGeometry(c.r * 0.82, c.r * 0.82, 0.016, 10), PALETTE.fungusGill,
+        { pos: [c.x, c.h - 0.012, c.z] }));
+    }
+    return mergeGeometries(p, false);
+  }
+
   _makeInstanced(geo, count, roughness = 0.78) {
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness, metalness: 0.02 });
     const mesh = new THREE.InstancedMesh(geo, mat, count);
@@ -534,11 +563,13 @@ export class Terrarium {
     this.plantMesh = this._makeInstanced(this._plantGeometry(), CAPS.plants, 0.86);
     this.herbMesh = this._makeInstanced(this._herbivoreGeometry(), CAPS.herbivores, 0.72);
     this.predMesh = this._makeInstanced(this._predatorGeometry(), CAPS.predators, 0.68);
+    this.fungusMesh = this._makeInstanced(this._fungusGeometry(), CAPS.fungi, 0.9);
     this.plantMesh.name = 'plant';
     this.herbMesh.name = 'herbivore';
     this.predMesh.name = 'predator';
+    this.fungusMesh.name = 'fungus';
     // แผนที่ instance index -> id ของสิ่งมีชีวิต (ใช้ตอนคลิกเลือก)
-    this.ids = { plant: [], herbivore: [], predator: [] };
+    this.ids = { plant: [], herbivore: [], predator: [], fungus: [] };
   }
 
   // --------------------------------------------------------------- selection
@@ -622,6 +653,7 @@ export class Terrarium {
   update(sim, dtReal, selection) {
     const t = this.clock.getElapsedTime();
     this._syncPlants(sim, t);
+    this._syncFungi(sim, t);
     this._syncAnimals(sim.herbivores, this.herbMesh, this.ids.herbivore, HERBIVORE, t);
     this._syncAnimals(sim.predators, this.predMesh, this.ids.predator, PREDATOR, t);
     this._syncSelection(sim, selection);
@@ -649,6 +681,29 @@ export class Terrarium {
       // ต้นที่ขาดน้ำจะออกเหลือง ต้นสมบูรณ์จะเขียวสด
       const dry = 1 - p.health;
       COL.setHSL(0.26 - dry * 0.12, 0.42 + dry * 0.22, 0.46 + p.tint * 0.12 - dry * 0.06);
+      mesh.setColorAt(i, COL);
+    }
+    mesh.count = n;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }
+
+  _syncFungi(sim, t) {
+    const mesh = this.fungusMesh;
+    const ids = this.ids.fungus;
+    ids.length = 0;
+    const n = Math.min(sim.fungi.length, CAPS.fungi);
+    for (let i = 0; i < n; i++) {
+      const f = sim.fungi[i];
+      ids.push(f.id);
+      const s = 0.45 + f.size * 0.85;
+      OBJ.position.set(f.x, this.groundHeight(f.x, f.z) - 0.02, f.z);
+      OBJ.rotation.set(0, f.lean, 0);
+      OBJ.scale.set(s, s * (0.8 + f.size * 0.35), s);
+      OBJ.updateMatrix();
+      mesh.setMatrixAt(i, OBJ.matrix);
+      // ดอกอ่อนสีซีด ดอกแก่สีม่วงเข้มขึ้น
+      COL.setHSL(0.78 - f.tint * 0.06, 0.2 + f.size * 0.22, 0.82 - f.size * 0.2);
       mesh.setColorAt(i, COL);
     }
     mesh.count = n;
@@ -693,7 +748,8 @@ export class Terrarium {
       return;
     }
     const y = this.groundHeight(entity.x, entity.z);
-    const scale = entity.kind === 'plant' ? 0.5 + entity.size * 0.7 : 0.85;
+    const scale = entity.kind === 'plant' ? 0.5 + entity.size * 0.7
+      : entity.kind === 'fungus' ? 0.45 + entity.size * 0.4 : 0.85;
     this.selectRing.visible = true;
     this.selectRing.position.set(entity.x, y + 0.06, entity.z);
     this.selectRing.scale.setScalar(scale);
@@ -801,7 +857,8 @@ export class Terrarium {
   /** คลิกโดนสิ่งมีชีวิตตัวไหน -> { kind, id } */
   pick(event) {
     this.raycaster.setFromCamera(this._ndc(event), this.camera);
-    const hits = this.raycaster.intersectObjects([this.herbMesh, this.predMesh, this.plantMesh], false);
+    const hits = this.raycaster.intersectObjects(
+      [this.herbMesh, this.predMesh, this.plantMesh, this.fungusMesh], false);
     for (const hit of hits) {
       const kind = hit.object.name;
       const id = this.ids[kind]?.[hit.instanceId];
