@@ -41,6 +41,7 @@ export class UI {
       moisture: $('statMoisture'), bar: $('barMoisture'),
       nutrient: $('statNutrient'), barNutrient: $('barNutrient'),
       time: $('statTime'), day: $('statDay'), speed: $('statSpeed'), state: $('statState'),
+      season: $('statSeason'), gene: $('statGene'),
       inspector: $('inspector'), toast: $('toast'),
       play: $('btnPlay'), plant: $('btnPlant'), hint: $('actionHint'),
       seed: $('seedInput'), presets: $('presetList'),
@@ -159,6 +160,9 @@ export class UI {
     this.el.day.textContent = String(Math.floor(sim.time / SECONDS_PER_DAY) + 1);
     this.el.state.textContent = !this.playing ? 'หยุดชั่วคราว'
       : sim.isRaining ? 'ฝนกำลังตก' : 'กำลังเดิน';
+    this.el.season.textContent = sim.seasonName;
+    const gene = sim.averageGene(sim.herbivores);
+    this.el.gene.textContent = gene === null ? '—' : gene.toFixed(3);
 
     const now = performance.now();
     if (now - this._lastInspect > 90) {
@@ -261,6 +265,10 @@ export class UI {
       else targetText = `<b>เดินไปยังจุดหมาย</b> ห่าง ${d} หน่วย`;
     }
     const canBreed = a.energy > spec.breedEnergy && a.age > spec.breedAge && a.breedCooldown <= 0;
+    const popGene = sim.averageGene(a.kind === 'herbivore' ? sim.herbivores : sim.predators);
+    const diff = popGene === null ? 0 : (a.speedGene - popGene);
+    const geneVsPop = Math.abs(diff) < 0.005 ? 'พอ ๆ กับฝูง'
+      : `${diff > 0 ? 'เร็วกว่า' : 'ช้ากว่า'} ${(Math.abs(diff) * 100).toFixed(1)}%`;
     return `${this._head(a)}
       ${this._bar('พลังงาน', a.energy, a.maxEnergy, SPECIES_COLORS[a.kind], `${a.energy.toFixed(0)} / ${a.maxEnergy}`)}
       ${this._bar('ความหิว', hunger, 1, '#d98a4a', `${Math.round(hunger * 100)}%`)}
@@ -270,6 +278,8 @@ export class UI {
         <div><small>มื้อที่กินแล้ว</small><b>${a.meals}</b></div>
         <div><small>พร้อมสืบพันธุ์</small><b>${canBreed ? 'พร้อม' : `อีก ${Math.max(0, a.breedCooldown).toFixed(0)} วิ`}</b></div>
         <div><small>ที่กำบัง</small><b>${Math.round(sim.coverAt(a.x, a.z) * 100)}%</b></div>
+        <div><small>ยีนความเร็ว</small><b>${a.speedGene.toFixed(3)}</b></div>
+        <div><small>เทียบฝูง</small><b>${geneVsPop}</b></div>
       </div>
       <div class="insp-target">เป้าหมายตอนนี้: ${targetText}<br>
         <small style="color:rgba(246,231,211,.5)">เส้นสีในภาชนะชี้ไปยังเป้าหมายเดียวกันนี้</small></div>`;

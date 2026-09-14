@@ -12,7 +12,7 @@
 import { makeRng, hashSeed } from './rng.js';
 import {
   SIM_DT, WORLD, CAPS, COVER, PLANT, HERBIVORE, PREDATOR, FUNGUS,
-  MOISTURE, NUTRIENT, DETRITUS, PRESETS,
+  MOISTURE, NUTRIENT, DETRITUS, EVOLUTION, SEASON, PRESETS,
 } from './config.js';
 
 const TAU = Math.PI * 2;
@@ -49,6 +49,7 @@ export class Ecosystem {
     this.predators = [];
     this.fungi = [];
     this.rainTimer = 0;
+    this.rainIntensity = 1;
     this.history = [];
     this.historyTimer = 0;
     this.events = [];
@@ -223,6 +224,24 @@ export class Ecosystem {
 
   get isRaining() { return this.rainTimer > 0; }
 
+  /** ตำแหน่งในรอบปี 0..1 (0 = กลางฤดูฝน) */
+  get seasonPhase() {
+    return (this.time % SEASON.secondsPerYear) / SEASON.secondsPerYear;
+  }
+
+  /** ชื่อฤดูปัจจุบัน */
+  get seasonName() {
+    return SEASON.names[Math.floor(this.seasonPhase * SEASON.names.length) % SEASON.names.length];
+  }
+
+  /**
+   * ตัวคูณอัตราการระเหยตามฤดู — ต่ำสุดกลางฤดูฝน สูงสุดกลางฤดูแล้ง
+   * ใช้ cosine เพื่อให้เปลี่ยนอย่างนุ่มนวล ไม่กระตุกตอนข้ามฤดู
+   */
+  get seasonDryness() {
+    return 1 - SEASON.amplitude * Math.cos(this.seasonPhase * TAU);
+  }
+
   get counts() {
     return {
       plants: this.plants.length,
@@ -268,16 +287,16 @@ export class Ecosystem {
     return f;
   }
 
-  addHerbivore(x, z, energy = HERBIVORE.startEnergy) {
+  addHerbivore(x, z, energy = HERBIVORE.startEnergy, gene = null) {
     if (this.herbivores.length >= CAPS.herbivores) return null;
-    const h = this._makeAnimal('herbivore', x, z, energy, HERBIVORE);
+    const h = this._makeAnimal('herbivore', x, z, energy, HERBIVORE, gene);
     this.herbivores.push(h);
     return h;
   }
 
-  addPredator(x, z, energy = PREDATOR.startEnergy, home = null) {
+  addPredator(x, z, energy = PREDATOR.startEnergy, home = null, gene = null) {
     if (this.predators.length >= CAPS.predators) return null;
-    const p = this._makeAnimal('predator', x, z, energy, PREDATOR);
+    const p = this._makeAnimal('predator', x, z, energy, PREDATOR, gene);
     p.home = home || this._claimTerritory(x, z) || { x, z };
     this.predators.push(p);
     return p;
@@ -307,12 +326,13 @@ export class Ecosystem {
     return null;
   }
 
-  _makeAnimal(kind, x, z, energy, spec) {
+  _makeAnimal(kind, x, z, energy, spec, gene = null) {
     return {
       id: this.nextId++, kind, alive: true,
       x, z,
       dir: this.rng() * TAU,
-      speedGene: 1 + this.rng.spread() * 0.12,   // ความต่างเล็กน้อยระหว่างตัว
+      // ยีนความเร็ว: รับจากพ่อแม่ถ้ามี ไม่งั้นสุ่มรอบ 1.0 (ประชากรตั้งต้น)
+      speedGene: gene ?? (1 + this.rng.spread() * EVOLUTION.spread),
       energy,
       maxEnergy: spec.maxEnergy,
       age: 0,
@@ -331,8 +351,9 @@ export class Ecosystem {
     };
   }
 
-  startRain(duration = MOISTURE.rainDuration) {
+  startRain(duration = MOISTURE.rainDuration, intensity = 1) {
     this.rainTimer = Math.max(this.rainTimer, duration);
+    this.rainIntensity = intensity;
     this._log('rain', 'ฝนตกลงมาในเทอราเรียม');
   }
 
@@ -348,6 +369,8 @@ export class Ecosystem {
     const dt = SIM_DT;
     this.time += dt;
     this.steps++;
+
+    this._seasonalRain(dt);
 
     this._coverTimer -= dt;
     if (this._coverTimer <= 0) { this._coverTimer = COVER.updateEvery; this._updateCover(); }
@@ -373,6 +396,17 @@ export class Ecosystem {
    *   -> ส่วนใหญ่กลั่นตัวที่ผนังแก้วแล้วตกกลับลงดินอย่างสม่ำเสมอ
    * ทำให้เกิดความชื้นไล่ระดับ (ใกล้แอ่งน้ำชื้นกว่า) และระบบอยู่ตัวได้นาน
    */
+  /** ฤดูฝนมีฝนตกเองเป็นระยะ ยิ่งใกล้กลางฤดูฝนยิ่งบ่อย */
+  _seasonalRain(dt) {
+    if (this.rainTimer > 0) return;
+    const wetness = 1 - this.seasonDryness / (1 + SEASON.amplitude); // 0..1 ยิ่งมากยิ่งชื้น
+    if (wetness <= 0) return;
+    if (this.rng() < SEASON.rainChance * wetness * dt) {
+      this.startRain(SEASON.rainDuration, SEASON.rainIntensity);
+      this._log('rain', `ฝนตามฤดูกาล (${this.seasonName})`);
+    }
+  }
+
   _stepMoisture(dt) {
     const n = this.gridN;
     const m = this.moisture, next = this._moistureNext, pool = this.poolMask;
@@ -380,8 +414,8 @@ export class Ecosystem {
     if (raining) this.rainTimer = Math.max(0, this.rainTimer - dt);
 
     const diff = Math.min(0.22, MOISTURE.diffuse * dt);
-    const evap = this.env.evaporation * dt;
-    const rain = raining ? MOISTURE.rainRate * dt : 0;
+    const evap = this.env.evaporation * this.seasonDryness * dt;
+    const rain = raining ? MOISTURE.rainRate * this.rainIntensity * dt : 0;
     let evaporated = 0;
     let landCells = 0;
 
@@ -695,7 +729,8 @@ export class Ecosystem {
       }
 
       const moved = this._moveAnimal(h, spec, speedMul, dt);
-      const burn = h.state === 'rest' ? spec.metabolism * spec.restMetabolism : spec.metabolism;
+      const burn = (h.state === 'rest' ? spec.metabolism * spec.restMetabolism : spec.metabolism)
+        * this._basalFactor(h);
       h.energy -= (burn + spec.moveCost * moved) * dt;
 
       // สืบพันธุ์
@@ -706,6 +741,7 @@ export class Ecosystem {
         h.breedCooldown = spec.breedCooldown;
         const baby = this.addHerbivore(
           h.x + this.rng.spread() * 0.8, h.z + this.rng.spread() * 0.8, spec.breedCost * 0.72,
+          this._inherit(h.speedGene),
         );
         if (baby) { baby.breedCooldown = spec.breedCooldown; this.totals.births.herbivore++; }
       }
@@ -787,7 +823,7 @@ export class Ecosystem {
 
       const gait = p.state === 'hunt' ? spec.huntSpeed : p.state === 'rest' ? 0.45 : 0.72;
       const moved = p.state === 'eat' ? 0 : this._moveAnimal(p, spec, gait, dt);
-      p.energy -= (spec.metabolism + spec.moveCost * moved) * dt;
+      p.energy -= (spec.metabolism * this._basalFactor(p) + spec.moveCost * moved) * dt;
 
       if (p.energy > spec.breedEnergy && p.age > spec.breedAge && p.breedCooldown <= 0
           && this.predators.length < CAPS.predators
@@ -797,7 +833,8 @@ export class Ecosystem {
         if (home) {
           p.energy -= spec.breedCost;
           p.breedCooldown = spec.breedCooldown;
-          const baby = this.addPredator(home.x, home.z, spec.breedCost * 0.72, home);
+          const baby = this.addPredator(home.x, home.z, spec.breedCost * 0.72, home,
+            this._inherit(p.speedGene));
           if (baby) { baby.breedCooldown = spec.breedCooldown; this.totals.births.predator++; }
         } else {
           p.breedCooldown = spec.breedCooldown * 0.5;
@@ -844,7 +881,8 @@ export class Ecosystem {
     if (Math.abs(realDx) + Math.abs(realDz) > 1e-5) a.dir = Math.atan2(realDx, realDz);
     a.x = nx; a.z = nz;
     a.moving = Math.min(1, a.moving + dt * 4);
-    return speedMul;
+    // ต้นทุนแปรผันตามกำลังสองของความเร็ว — ตัวที่เร็วกว่าต้องหาอาหารมากกว่า
+    return speedMul * a.speedGene * a.speedGene;
   }
 
   /**
@@ -905,6 +943,28 @@ export class Ecosystem {
   // ------------------------------------------------------------------ queries
 
   hungerOf(a) { return clamp(1 - a.energy / a.maxEnergy, 0, 1); }
+
+  /**
+   * ตัวคูณค่าใช้จ่ายพลังงานพื้นฐานตามยีนความเร็ว
+   * ตัวที่เร็วกว่ามีกล้ามเนื้อมากกว่า จึงเปลืองพลังงานแม้ตอนไม่ได้วิ่ง
+   */
+  _basalFactor(a) {
+    const k = EVOLUTION.basalCostShare;
+    return (1 - k) + k * a.speedGene * a.speedGene;
+  }
+
+  /** ยีนของลูก = ยีนพ่อแม่ + กลายพันธุ์เล็กน้อย */
+  _inherit(gene) {
+    return clamp(gene * (1 + this.rng.spread() * EVOLUTION.mutation), EVOLUTION.min, EVOLUTION.max);
+  }
+
+  /** ค่าเฉลี่ยยีนความเร็วของประชากร (ใช้ดูทิศทางวิวัฒนาการ) */
+  averageGene(list) {
+    if (!list.length) return null;
+    let sum = 0;
+    for (let i = 0; i < list.length; i++) sum += list[i].speedGene;
+    return sum / list.length;
+  }
 
   _plantById(id) { return id == null ? null : this.plants.find((p) => p.id === id) || null; }
   _herbById(id) { return id == null ? null : this.herbivores.find((h) => h.id === id) || null; }
@@ -1023,6 +1083,9 @@ export class Ecosystem {
       fungi: this.fungi.length,
       moisture: this.averageMoisture(),
       nutrient: this.averageNutrient(),
+      herbGene: this.averageGene(this.herbivores),
+      predGene: this.averageGene(this.predators),
+      season: Math.floor(this.seasonPhase * SEASON.names.length),
       raining: this.rainTimer > 0,
     });
     if (this.history.length > 900) this.history.shift();

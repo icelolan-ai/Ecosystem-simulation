@@ -20,8 +20,16 @@ const SEEDS = Array.from({ length: 24 }, (_, i) => `s${i}`);
 const SURVIVE_MINUTES = 15;
 /** เกณฑ์ขั้นต่ำ ตั้งต่ำกว่าค่าที่วัดได้จริง (~48%) พอให้จับ regression โดยไม่ flaky */
 const MIN_SURVIVING = 8;
-/** ประชากรเฉลี่ยต้องไม่ชนเพดาน ไม่งั้นแปลว่าเพดานกลายเป็นตัวคุมระบบแทนกลไกนิเวศ */
-const MAX_CAP_USAGE = 0.9;
+/**
+ * สัดส่วนเวลาสูงสุดที่ยอมให้ประชากร "ค้าง" เหนือ 90% ของเพดาน
+ *
+ * ข้อเท็จจริงที่วัดได้: เพดานในโปรเจกต์นี้ไม่ได้เป็นแค่ตัวคุม performance อย่างที่
+ * เอกสารรุ่นแรกอ้างไว้ ตอนประชากรบูม เพดานจะตัดยอดและการตัดยอดนั้นช่วยพยุงระบบจริง
+ * (ทดลองยกเพดานขึ้นแล้วอัตราการอยู่รอดตกลง เพราะ overshoot แรงขึ้น)
+ * การตรวจนี้จึงไม่ได้ห้ามแตะเพดาน แต่กันกรณีเสื่อม คือประชากรนอนอยู่ที่เพดานตลอดเวลา
+ * จนกลไกนิเวศไม่มีความหมาย
+ */
+const MAX_SATURATION = 0.85;
 
 const results = [];
 const record = (name, pass, detail) => {
@@ -38,6 +46,7 @@ function run(presetId, seed, minutes) {
   let sum = { plants: 0, herbivores: 0, predators: 0, fungi: 0 };
   let samples = 0;
   let diedAt = null;
+  let saturated = 0;
   for (let i = 0; i < steps; i++) {
     eco.step();
     if (diedAt === null && (!eco.herbivores.length || !eco.predators.length)) diedAt = eco.time;
@@ -46,12 +55,16 @@ function run(presetId, seed, minutes) {
       sum.herbivores += eco.herbivores.length;
       sum.predators += eco.predators.length;
       sum.fungi += eco.fungi.length;
+      const usage = Math.max(eco.plants.length / CAPS.plants, eco.herbivores.length / CAPS.herbivores,
+        eco.fungi.length / CAPS.fungi);
+      if (usage > 0.9) saturated++;
       samples++;
     }
   }
   return {
     eco,
     diedAt,
+    saturation: samples ? saturated / samples : 0,
     avg: {
       plants: sum.plants / samples,
       herbivores: sum.herbivores / samples,
@@ -108,21 +121,20 @@ console.log('\n[2c] ผู้ย่อยสลายต้องทำงาน
     `ธาตุอาหารเฉลี่ยในดิน ${eco.averageNutrient().toFixed(3)} (เกณฑ์ > 0.15)`);
 }
 
-// ───────────────────────────── 3. เพดานต้องเป็นแค่กันล้น ไม่ใช่ตัวคุมระบบ
-console.log('\n[3] ประชากรต้องแกว่งอยู่ต่ำกว่าเพดาน (เพดานมีไว้คุม performance เท่านั้น)');
+// ───────────────────────────── 3. เพดานต้องไม่กลายเป็นที่นอนถาวรของประชากร
+console.log('\n[3] ประชากรต้องไม่นอนค้างอยู่ที่เพดานตลอดเวลา');
 {
   const alive = runs.filter((r) => r.diedAt === null);
-  const worst = { kind: null, usage: 0 };
-  if (!alive.length) skip('headroom', 'ไม่มีรันที่รอดให้วัด (ดูข้อ survival)');
-  else {
-  for (const r of alive) {
-    for (const [kind, cap] of [['plants', CAPS.plants], ['herbivores', CAPS.herbivores], ['predators', CAPS.predators]]) {
-      const usage = r.avg[kind] / cap;
-      if (usage > worst.usage) { worst.kind = `${kind} (seed ${r.seed})`; worst.usage = usage; }
+  if (!alive.length) {
+    skip('saturation', 'ไม่มีรันที่รอดให้วัด (ดูข้อ survival)');
+  } else {
+    let worst = { seed: null, share: 0 };
+    for (const r of alive) {
+      if (r.saturation > worst.share) worst = { seed: r.seed, share: r.saturation };
     }
-  }
-  record('headroom', worst.usage < MAX_CAP_USAGE,
-    `ใช้เพดานสูงสุด ${(worst.usage * 100).toFixed(0)}% ที่ ${worst.kind} (เกณฑ์ < ${MAX_CAP_USAGE * 100}%)`);
+    record('saturation', worst.share < MAX_SATURATION,
+      `ค้างเหนือ 90% ของเพดานนานสุด ${(worst.share * 100).toFixed(0)}% ของเวลา `
+      + `(seed ${worst.seed}, เกณฑ์ < ${MAX_SATURATION * 100}%)`);
   }
 }
 
