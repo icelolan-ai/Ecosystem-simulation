@@ -11,10 +11,15 @@
 import { Ecosystem } from '../js/simulation.js';
 import { SIM_DT, CAPS, PRESET_ORDER, PRESETS } from '../js/config.js';
 
-const SEEDS = ['terrarium', 'moss', 'glass', 'fern', 'amber', 'clay', 'leaf', 'stone'];
+/**
+ * seed กลาง ๆ ที่ไม่ได้คัดมา — ใช้วัดเสถียรภาพของ "ระบบ" ไม่ใช่ของ seed ที่โชคดี
+ * (เวอร์ชันแรกของไฟล์นี้ใช้ seed ที่คัดมา 8 ตัวแล้วได้ 7/8 ซึ่งสูงเกินจริงมาก
+ *  วัดด้วย seed กลาง 40 ตัวได้ราว 48% ตัวเลขนั้นคือค่าจริงของระบบ)
+ */
+const SEEDS = Array.from({ length: 24 }, (_, i) => `s${i}`);
 const SURVIVE_MINUTES = 15;
-/** ต้องรอดอย่างน้อยเท่านี้ (ปัจจุบันได้ 7/8 เผื่อระยะไว้ 1 กันความผันผวน) */
-const MIN_SURVIVING = 6;
+/** เกณฑ์ขั้นต่ำ ตั้งต่ำกว่าค่าที่วัดได้จริง (~48%) พอให้จับ regression โดยไม่ flaky */
+const MIN_SURVIVING = 8;
 /** ประชากรเฉลี่ยต้องไม่ชนเพดาน ไม่งั้นแปลว่าเพดานกลายเป็นตัวคุมระบบแทนกลไกนิเวศ */
 const MAX_CAP_USAGE = 0.9;
 
@@ -30,7 +35,7 @@ const skip = (name, detail) => console.log(`  · ${name} — ข้าม: ${det
 function run(presetId, seed, minutes) {
   const eco = new Ecosystem(presetId, seed);
   const steps = Math.round((minutes * 60) / SIM_DT);
-  let sum = { plants: 0, herbivores: 0, predators: 0 };
+  let sum = { plants: 0, herbivores: 0, predators: 0, fungi: 0 };
   let samples = 0;
   let diedAt = null;
   for (let i = 0; i < steps; i++) {
@@ -40,6 +45,7 @@ function run(presetId, seed, minutes) {
       sum.plants += eco.plants.length;
       sum.herbivores += eco.herbivores.length;
       sum.predators += eco.predators.length;
+      sum.fungi += eco.fungi.length;
       samples++;
     }
   }
@@ -50,6 +56,7 @@ function run(presetId, seed, minutes) {
       plants: sum.plants / samples,
       herbivores: sum.herbivores / samples,
       predators: sum.predators / samples,
+      fungi: sum.fungi / samples,
     },
   };
 }
@@ -70,13 +77,35 @@ console.log('\n[1] seed เดิมต้องให้ผลลัพธ์�
 }
 
 // ───────────────────────────── 2. ระบบต้องอยู่รอดได้นานพอ
-console.log(`\n[2] preset "สมดุล" ต้องอยู่รอดครบ ${SURVIVE_MINUTES} นาที อย่างน้อย ${MIN_SURVIVING}/${SEEDS.length} seed`);
+console.log(`\n[2] ระบบต้องอยู่รอดครบ ${SURVIVE_MINUTES} นาที อย่างน้อย ${MIN_SURVIVING}/${SEEDS.length} seed (seed กลาง ไม่ได้คัดมา)`);
 const runs = SEEDS.map((seed) => ({ seed, ...run('balanced', seed, SURVIVE_MINUTES) }));
 {
   const alive = runs.filter((r) => r.diedAt === null);
   const dead = runs.filter((r) => r.diedAt !== null);
   record('survival', alive.length >= MIN_SURVIVING,
     `รอด ${alive.length}/${SEEDS.length}${dead.length ? ` (ล่ม: ${dead.map((d) => `${d.seed}@${d.diedAt.toFixed(0)}s`).join(', ')})` : ''}`);
+}
+
+// ───────────────────────────── 2b. seed ที่แถมมากับ preset ต้องอยู่รอดจริง
+console.log(`\n[2b] seed ของ preset "สมดุล" (สิ่งที่ผู้ใช้เห็นตอนเปิดเว็บ) ต้องรอดครบ ${SURVIVE_MINUTES} นาที`);
+{
+  const r = run('balanced', PRESETS.balanced.seed, SURVIVE_MINUTES);
+  record(`preset seed "${PRESETS.balanced.seed}"`, r.diedAt === null,
+    r.diedAt === null
+      ? `รอด (พืช ${r.eco.plants.length} / กินพืช ${r.eco.herbivores.length} / ผู้ล่า ${r.eco.predators.length} / เห็ดรา ${r.eco.fungi.length})`
+      : `ล่มที่ ${r.diedAt.toFixed(0)}s — ผู้ใช้จะเห็นระบบตายก่อนได้ดูอะไร`);
+}
+
+// ───────────────────────────── 2c. วงจรสารอาหารต้องหมุนจริง
+console.log('\n[2c] ผู้ย่อยสลายต้องทำงานจริง ไม่ใช่ของประดับ');
+{
+  const r = run('balanced', PRESETS.balanced.seed, 8);
+  const eco = r.eco;
+  record('decomposers', eco.fungi.length > 0 && eco.totals.recycled > 10,
+    `เห็ดรา ${eco.fungi.length} ดอก คืนธาตุอาหารสะสม ${eco.totals.recycled.toFixed(0)} หน่วย ซากคงค้าง ${eco.totalDetritus().toFixed(1)}`);
+  // ธาตุอาหารต้องไม่ไหลลงเหวจนดินจืดถาวร
+  record('soil not exhausted', eco.averageNutrient() > 0.15,
+    `ธาตุอาหารเฉลี่ยในดิน ${eco.averageNutrient().toFixed(3)} (เกณฑ์ > 0.15)`);
 }
 
 // ───────────────────────────── 3. เพดานต้องเป็นแค่กันล้น ไม่ใช่ตัวคุมระบบ
@@ -105,7 +134,7 @@ for (const id of PRESET_ORDER) {
   try {
     const r = run(id, PRESETS[id].seed, 5);
     ok = r.eco.plants.length > 0;
-    detail = `พืช ${r.eco.plants.length} / กินพืช ${r.eco.herbivores.length} / ผู้ล่า ${r.eco.predators.length}`;
+    detail = `พืช ${r.eco.plants.length} / กินพืช ${r.eco.herbivores.length} / ผู้ล่า ${r.eco.predators.length} / เห็ดรา ${r.eco.fungi.length}`;
   } catch (err) {
     ok = false;
     detail = `throw: ${err.message}`;
@@ -122,7 +151,7 @@ if (process.argv.includes('--trace')) {
     for (let i = 0; i < Math.round(600 / SIM_DT); i++) {
       eco.step();
       if (i % Math.round(60 / SIM_DT) === 0) {
-        marks.push(`${(eco.time / 60).toFixed(0)}m P${String(eco.plants.length).padStart(3)} H${String(eco.herbivores.length).padStart(2)} X${String(eco.predators.length).padStart(2)}`);
+        marks.push(`${(eco.time / 60).toFixed(0)}m P${String(eco.plants.length).padStart(3)} H${String(eco.herbivores.length).padStart(2)} X${String(eco.predators.length).padStart(2)} F${String(eco.fungi.length).padStart(3)}`);
       }
     }
     console.log(`  ${PRESETS[id].name}: ${marks.join(' | ')}`);
