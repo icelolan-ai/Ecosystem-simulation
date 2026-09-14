@@ -6,6 +6,7 @@ import {
   PRESETS, PRESET_ORDER, SPECIES_COLORS, SECONDS_PER_DAY,
   HERBIVORE, PREDATOR, PLANT, FUNGUS, NUTRIENT,
 } from './config.js';
+import { CAUSE_TEXT } from './simulation.js';
 
 const STATE_LABEL = {
   wander: 'เดินสำรวจ',
@@ -42,7 +43,7 @@ export class UI {
       nutrient: $('statNutrient'), barNutrient: $('barNutrient'),
       time: $('statTime'), day: $('statDay'), speed: $('statSpeed'), state: $('statState'),
       season: $('statSeason'), gene: $('statGene'),
-      inspector: $('inspector'), toast: $('toast'),
+      inspector: $('inspector'), toast: $('toast'), eventLog: $('eventLog'),
       play: $('btnPlay'), plant: $('btnPlant'), hint: $('actionHint'),
       seed: $('seedInput'), presets: $('presetList'),
       speedRange: $('speed'), speedOut: $('speedOut'),
@@ -169,6 +170,10 @@ export class UI {
       this._lastInspect = now;
       this._renderInspector(sim, selection);
     }
+    if (now - (this._lastLog || 0) > 400) {
+      this._lastLog = now;
+      this._renderEventLog(sim);
+    }
   }
 
   _trend(el, sim, key) {
@@ -178,6 +183,47 @@ export class UI {
     const diff = h[h.length - 1][key] - past;
     el.textContent = diff === 0 ? '' : `${diff > 0 ? '▲' : '▼'}${Math.abs(diff)}`;
     el.className = diff > 0 ? 'up' : diff < 0 ? 'down' : '';
+  }
+
+  /**
+   * บันทึกเหตุการณ์ + รายงานชันสูตรตอนสายพันธุ์สูญพันธุ์
+   * ใช้ข้อมูลที่ซิมูเลชันเก็บอยู่แล้ว (events, causes, extinctionReports)
+   */
+  _renderEventLog(sim) {
+    const signature = `${sim.events.length}|${sim.extinctionReports.length}|${Math.floor(sim.time)}`;
+    if (signature === this._logSignature) return;
+    this._logSignature = signature;
+
+    const parts = [];
+    for (const r of sim.extinctionReports.slice(-2)) parts.push(this._postmortem(r));
+
+    const recent = sim.events.slice(-7).reverse();
+    if (recent.length) {
+      for (const e of recent) {
+        parts.push(`<div class="event-row" data-type="${e.type}">
+          <time>${fmtTime(e.t)}</time><span>${e.text}</span></div>`);
+      }
+    } else if (!parts.length) {
+      parts.push('<p class="empty-msg">ยังไม่มีเหตุการณ์สำคัญ</p>');
+    }
+    this.el.eventLog.innerHTML = parts.join('');
+  }
+
+  _postmortem(r) {
+    const name = KIND_LABEL[r.kind];
+    const causes = Object.entries(r.tally)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${CAUSE_TEXT[k] || k} ${v}`)
+      .join(' · ') || 'ไม่มีข้อมูล';
+    const plants = r.avgPlants === null ? '—' : r.avgPlants.toFixed(0);
+    return `<div class="postmortem">
+      <div class="pm-head"><b>${name}สูญพันธุ์</b> ที่ ${fmtTime(r.time)}</div>
+      <div class="pm-detail">
+        ${r.window} วินาทีก่อนหน้า ตายไป <em>${r.total}</em> ตัว — ${causes}<br>
+        ช่วงนั้นมีพืชเฉลี่ย <em>${plants}</em> ต้น · ผู้ล่า <em>${r.predators}</em> ตัว ·
+        ความชื้น <em>${Math.round(r.moisture * 100)}%</em> · ${r.season}
+      </div>
+    </div>`;
   }
 
   // --------------------------------------------------------------- inspector

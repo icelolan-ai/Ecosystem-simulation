@@ -17,6 +17,14 @@ import {
 
 const TAU = Math.PI * 2;
 
+/** คำอธิบายสาเหตุการตายแบบอ่านง่าย */
+export const CAUSE_TEXT = {
+  eaten: 'ถูกล่า',
+  starved: 'อดตาย',
+  old: 'แก่ตาย',
+  drought: 'ขาดน้ำ',
+};
+
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 function dist2(ax, az, bx, bz) { const dx = ax - bx, dz = az - bz; return dx * dx + dz * dz; }
 
@@ -59,7 +67,16 @@ export class Ecosystem {
       eaten: { plant: 0, herbivore: 0 },
       recycled: 0,          // ธาตุอาหารที่ผู้ย่อยสลายคืนสู่ดินสะสม
     };
+    /** สถิติสาเหตุการตายสะสม แยกตามชนิด */
+    this.causes = {
+      plant: {}, herbivore: {}, predator: {}, fungus: {},
+    };
+    /** บันทึกการตายล่าสุด ใช้ชันสูตรว่าช่วงก่อนสูญพันธุ์เกิดอะไรขึ้น */
+    this.recentDeaths = [];
+    /** รายงานการสูญพันธุ์ (เก็บไว้ให้ผู้ใช้อ่านย้อนหลังได้) */
+    this.extinctionReports = [];
     this.extinctAt = { herbivore: null, predator: null };
+    this._lastSeason = null;
 
     this._initMoisture();
     this._initSoilChemistry();
@@ -351,10 +368,68 @@ export class Ecosystem {
     };
   }
 
-  startRain(duration = MOISTURE.rainDuration, intensity = 1) {
+  startRain(duration = MOISTURE.rainDuration, intensity = 1, label = 'ฝนตกลงมาในเทอราเรียม') {
     this.rainTimer = Math.max(this.rainTimer, duration);
     this.rainIntensity = intensity;
-    this._log('rain', 'ฝนตกลงมาในเทอราเรียม');
+    if (label) this._log('rain', label);
+  }
+
+  /** บันทึกการตาย 1 ครั้ง (ใช้ทั้งสถิติสะสมและการชันสูตร) */
+  _recordDeath(kind, cause, x, z) {
+    const bucket = this.causes[kind];
+    bucket[cause] = (bucket[cause] || 0) + 1;
+    this.recentDeaths.push({ t: this.time, kind, cause });
+    // เก็บย้อนหลังพอสำหรับหน้าต่างชันสูตร
+    while (this.recentDeaths.length && this.time - this.recentDeaths[0].t > 180) {
+      this.recentDeaths.shift();
+    }
+  }
+
+  /** นับสาเหตุการตายของชนิดหนึ่งในช่วง N วินาทีล่าสุด */
+  deathsInWindow(kind, seconds) {
+    const since = this.time - seconds;
+    const tally = {};
+    let total = 0;
+    for (let i = 0; i < this.recentDeaths.length; i++) {
+      const d = this.recentDeaths[i];
+      if (d.t < since || d.kind !== kind) continue;
+      tally[d.cause] = (tally[d.cause] || 0) + 1;
+      total++;
+    }
+    return { tally, total };
+  }
+
+  /**
+   * สร้างรายงานชันสูตรตอนสายพันธุ์หนึ่งหมดไป
+   * ตอบคำถามว่า "ตายเพราะอะไร" และ "ตอนนั้นสภาพแวดล้อมเป็นยังไง"
+   */
+  _buildExtinctionReport(kind) {
+    const window = 120;
+    const { tally, total } = this.deathsInWindow(kind, window);
+    const plantsBefore = [];
+    for (let i = this.history.length - 1; i >= 0 && this.history[i].t > this.time - window; i--) {
+      plantsBefore.push(this.history[i].plants);
+    }
+    const avgPlants = plantsBefore.length
+      ? plantsBefore.reduce((a, b) => a + b, 0) / plantsBefore.length : null;
+    const top = Object.entries(tally).sort((a, b) => b[1] - a[1])[0] || null;
+    const report = {
+      kind,
+      time: this.time,
+      window,
+      tally,
+      total,
+      topCause: top ? top[0] : null,
+      avgPlants,
+      plants: this.plants.length,
+      predators: this.predators.length,
+      herbivores: this.herbivores.length,
+      moisture: this.averageMoisture(),
+      nutrient: this.averageNutrient(),
+      season: this.seasonName,
+    };
+    this.extinctionReports.push(report);
+    return report;
   }
 
   _log(type, text) {
@@ -370,6 +445,11 @@ export class Ecosystem {
     this.time += dt;
     this.steps++;
 
+    const season = this.seasonName;
+    if (season !== this._lastSeason) {
+      if (this._lastSeason !== null) this._log('season', `เข้าสู่${season}`);
+      this._lastSeason = season;
+    }
     this._seasonalRain(dt);
 
     this._coverTimer -= dt;
@@ -402,8 +482,8 @@ export class Ecosystem {
     const wetness = 1 - this.seasonDryness / (1 + SEASON.amplitude); // 0..1 ยิ่งมากยิ่งชื้น
     if (wetness <= 0) return;
     if (this.rng() < SEASON.rainChance * wetness * dt) {
-      this.startRain(SEASON.rainDuration, SEASON.rainIntensity);
-      this._log('rain', `ฝนตามฤดูกาล (${this.seasonName})`);
+      this.startRain(SEASON.rainDuration, SEASON.rainIntensity,
+        `ฝนปรอยตามฤดูกาล (${this.seasonName})`);
     }
   }
 
@@ -516,6 +596,7 @@ export class Ecosystem {
         p.deathCause = p.age > p.maxAge ? 'old' : 'drought';
         this._addDetritus(p.x, p.z, p.size * DETRITUS.fromPlantSize);
         this.totals.deaths.plant++;
+        this._recordDeath('plant', p.deathCause);
         continue;
       }
 
@@ -574,6 +655,7 @@ export class Ecosystem {
         f.alive = false;
         f.deathCause = f.age > f.maxAge ? 'old' : 'starved';
         this.totals.deaths.fungus++;
+        this._recordDeath('fungus', f.deathCause);
         continue;
       }
 
@@ -751,6 +833,7 @@ export class Ecosystem {
         h.deathCause = h.energy <= 0 ? 'starved' : 'old';
         this._addDetritus(h.x, h.z, h.maxEnergy * DETRITUS.fromAnimalEnergy);
         this.totals.deaths.herbivore++;
+        this._recordDeath('herbivore', h.deathCause);
       }
     }
   }
@@ -808,6 +891,7 @@ export class Ecosystem {
                 prey.maxEnergy * DETRITUS.fromAnimalEnergy * DETRITUS.eatenFraction);
               this.totals.deaths.herbivore++;
               this.totals.eaten.herbivore++;
+              this._recordDeath('herbivore', 'eaten');
               p.energy = Math.min(p.maxEnergy, p.energy + spec.killGain);
               this._addDetritus(p.x, p.z,
                 prey.maxEnergy * DETRITUS.fromAnimalEnergy * DETRITUS.fromPredation);
@@ -846,6 +930,7 @@ export class Ecosystem {
         p.deathCause = p.energy <= 0 ? 'starved' : 'old';
         this._addDetritus(p.x, p.z, p.maxEnergy * DETRITUS.fromAnimalEnergy);
         this.totals.deaths.predator++;
+        this._recordDeath('predator', p.deathCause);
       }
     }
   }
@@ -1062,14 +1147,16 @@ export class Ecosystem {
       this.herbivores = this.herbivores.filter((h) => h.alive);
       if (!this.herbivores.length && this.extinctAt.herbivore === null) {
         this.extinctAt.herbivore = this.time;
-        this._log('extinct', 'สัตว์กินพืชสูญพันธุ์');
+        const r = this._buildExtinctionReport('herbivore');
+        this._log('extinct', `สัตว์กินพืชสูญพันธุ์ (${CAUSE_TEXT[r.topCause] || 'ไม่ทราบสาเหตุ'})`);
       }
     }
     if (this.predators.some((p) => !p.alive)) {
       this.predators = this.predators.filter((p) => p.alive);
       if (!this.predators.length && this.extinctAt.predator === null) {
         this.extinctAt.predator = this.time;
-        this._log('extinct', 'ผู้ล่าสูญพันธุ์');
+        const r = this._buildExtinctionReport('predator');
+        this._log('extinct', `ผู้ล่าสูญพันธุ์ (${CAUSE_TEXT[r.topCause] || 'ไม่ทราบสาเหตุ'})`);
       }
     }
   }
