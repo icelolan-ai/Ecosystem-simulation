@@ -1,0 +1,64 @@
+# Deploy เว็บ LIVING TERRARIUM ขึ้น GitHub Pages อัตโนมัติ
+#
+# ตั้งค่าครั้งเดียวก่อนใช้งาน:
+#   Settings -> Pages -> Source: "GitHub Actions"
+#
+# เป็น static site ล้วน ไม่มีขั้นตอน build (Three.js ถูก vendor ไว้ใน js/vendor/ แล้ว)
+# workflow นี้จึงแค่ตรวจว่าซิมูเลชันยังทำงานถูกต้อง แล้วอัปโหลดไฟล์ทั้งหมดขึ้น Pages
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# ไม่ให้ deploy ซ้อนกัน แต่ไม่ยกเลิกตัวที่กำลังรันอยู่ (Pages ไม่ชอบโดนตัดกลางคัน)
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ตรวจว่าแกนซิมูเลชันยังเดินได้และยังทำซ้ำได้ ก่อนปล่อยขึ้นเว็บ
+  verify:
+    name: ตรวจสมดุลระบบนิเวศ
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: รันซิมูเลชันแบบ headless และตรวจ determinism
+        run: node tools/balance-test.mjs 3
+
+  deploy:
+    name: ปล่อยขึ้น GitHub Pages
+    needs: verify
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    # ต้องระบุ contents: read ด้วย เพราะ permissions ระดับ job แทนที่ค่าระดับ workflow
+    # ทั้งก้อน (ไม่ได้รวมกัน) ถ้าไม่ใส่ actions/checkout จะ clone ไม่ได้บน repo ส่วนตัว
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      # อัปโหลดทั้ง repo (action นี้ตัด .git และ .github ออกให้อยู่แล้ว)
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
