@@ -73,6 +73,7 @@ export class UI {
     $('btnHerb').addEventListener('click', () => this.h.onAddAnimal('herbivore'));
     $('btnPred').addEventListener('click', () => this.h.onAddAnimal('predator'));
     $('btnRain').addEventListener('click', () => this.h.onRain());
+    $('btnShare').addEventListener('click', () => this.h.onShare());
     this.el.plant.addEventListener('click', () => this.h.onTogglePlant());
     $('applySeed').addEventListener('click', () => this.h.onSeed(this.el.seed.value));
     this.el.seed.addEventListener('keydown', (e) => {
