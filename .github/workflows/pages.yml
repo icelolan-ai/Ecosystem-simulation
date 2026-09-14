@@ -41,7 +41,10 @@ jobs:
     needs: verify
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # ต้องระบุ contents: read ด้วย เพราะ permissions ระดับ job แทนที่ค่าระดับ workflow
+    # ทั้งก้อน (ไม่ได้รวมกัน) ถ้าไม่ใส่ actions/checkout จะ clone ไม่ได้บน repo ส่วนตัว
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
