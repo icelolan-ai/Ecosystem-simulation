@@ -16,6 +16,14 @@ python3 -m http.server 8000
 # เปิด http://localhost:8000
 ```
 
+### Deploy
+
+มี GitHub Actions workflow (`.github/workflows/pages.yml`) ที่ deploy ขึ้น GitHub Pages
+อัตโนมัติทุกครั้งที่ push เข้า `main` และรัน `tools/balance-test.mjs` ตรวจซิมูเลชันก่อน deploy
+(บน pull request จะรันเฉพาะขั้นตรวจ ไม่ deploy)
+
+ตั้งค่าครั้งเดียวก่อนใช้: **Settings → Pages → Source: "GitHub Actions"**
+
 ## สิ่งที่ระบบทำ
 
 ### สิ่งมีชีวิตมี state จริง
