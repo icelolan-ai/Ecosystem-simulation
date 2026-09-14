@@ -12,10 +12,18 @@
 import { makeRng, hashSeed } from './rng.js';
 import {
   SIM_DT, WORLD, CAPS, COVER, PLANT, HERBIVORE, PREDATOR, FUNGUS,
-  MOISTURE, NUTRIENT, DETRITUS, PRESETS,
+  MOISTURE, NUTRIENT, DETRITUS, EVOLUTION, SEASON, PRESETS,
 } from './config.js';
 
 const TAU = Math.PI * 2;
+
+/** คำอธิบายสาเหตุการตายแบบอ่านง่าย */
+export const CAUSE_TEXT = {
+  eaten: 'ถูกล่า',
+  starved: 'อดตาย',
+  old: 'แก่ตาย',
+  drought: 'ขาดน้ำ',
+};
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 function dist2(ax, az, bx, bz) { const dx = ax - bx, dz = az - bz; return dx * dx + dz * dz; }
@@ -49,6 +57,7 @@ export class Ecosystem {
     this.predators = [];
     this.fungi = [];
     this.rainTimer = 0;
+    this.rainIntensity = 1;
     this.history = [];
     this.historyTimer = 0;
     this.events = [];
@@ -58,7 +67,16 @@ export class Ecosystem {
       eaten: { plant: 0, herbivore: 0 },
       recycled: 0,          // ธาตุอาหารที่ผู้ย่อยสลายคืนสู่ดินสะสม
     };
+    /** สถิติสาเหตุการตายสะสม แยกตามชนิด */
+    this.causes = {
+      plant: {}, herbivore: {}, predator: {}, fungus: {},
+    };
+    /** บันทึกการตายล่าสุด ใช้ชันสูตรว่าช่วงก่อนสูญพันธุ์เกิดอะไรขึ้น */
+    this.recentDeaths = [];
+    /** รายงานการสูญพันธุ์ (เก็บไว้ให้ผู้ใช้อ่านย้อนหลังได้) */
+    this.extinctionReports = [];
     this.extinctAt = { herbivore: null, predator: null };
+    this._lastSeason = null;
 
     this._initMoisture();
     this._initSoilChemistry();
@@ -223,6 +241,24 @@ export class Ecosystem {
 
   get isRaining() { return this.rainTimer > 0; }
 
+  /** ตำแหน่งในรอบปี 0..1 (0 = กลางฤดูฝน) */
+  get seasonPhase() {
+    return (this.time % SEASON.secondsPerYear) / SEASON.secondsPerYear;
+  }
+
+  /** ชื่อฤดูปัจจุบัน */
+  get seasonName() {
+    return SEASON.names[Math.floor(this.seasonPhase * SEASON.names.length) % SEASON.names.length];
+  }
+
+  /**
+   * ตัวคูณอัตราการระเหยตามฤดู — ต่ำสุดกลางฤดูฝน สูงสุดกลางฤดูแล้ง
+   * ใช้ cosine เพื่อให้เปลี่ยนอย่างนุ่มนวล ไม่กระตุกตอนข้ามฤดู
+   */
+  get seasonDryness() {
+    return 1 - SEASON.amplitude * Math.cos(this.seasonPhase * TAU);
+  }
+
   get counts() {
     return {
       plants: this.plants.length,
@@ -268,16 +304,16 @@ export class Ecosystem {
     return f;
   }
 
-  addHerbivore(x, z, energy = HERBIVORE.startEnergy) {
+  addHerbivore(x, z, energy = HERBIVORE.startEnergy, gene = null) {
     if (this.herbivores.length >= CAPS.herbivores) return null;
-    const h = this._makeAnimal('herbivore', x, z, energy, HERBIVORE);
+    const h = this._makeAnimal('herbivore', x, z, energy, HERBIVORE, gene);
     this.herbivores.push(h);
     return h;
   }
 
-  addPredator(x, z, energy = PREDATOR.startEnergy, home = null) {
+  addPredator(x, z, energy = PREDATOR.startEnergy, home = null, gene = null) {
     if (this.predators.length >= CAPS.predators) return null;
-    const p = this._makeAnimal('predator', x, z, energy, PREDATOR);
+    const p = this._makeAnimal('predator', x, z, energy, PREDATOR, gene);
     p.home = home || this._claimTerritory(x, z) || { x, z };
     this.predators.push(p);
     return p;
@@ -307,12 +343,13 @@ export class Ecosystem {
     return null;
   }
 
-  _makeAnimal(kind, x, z, energy, spec) {
+  _makeAnimal(kind, x, z, energy, spec, gene = null) {
     return {
       id: this.nextId++, kind, alive: true,
       x, z,
       dir: this.rng() * TAU,
-      speedGene: 1 + this.rng.spread() * 0.12,   // ความต่างเล็กน้อยระหว่างตัว
+      // ยีนความเร็ว: รับจากพ่อแม่ถ้ามี ไม่งั้นสุ่มรอบ 1.0 (ประชากรตั้งต้น)
+      speedGene: gene ?? (1 + this.rng.spread() * EVOLUTION.spread),
       energy,
       maxEnergy: spec.maxEnergy,
       age: 0,
@@ -331,9 +368,68 @@ export class Ecosystem {
     };
   }
 
-  startRain(duration = MOISTURE.rainDuration) {
+  startRain(duration = MOISTURE.rainDuration, intensity = 1, label = 'ฝนตกลงมาในเทอราเรียม') {
     this.rainTimer = Math.max(this.rainTimer, duration);
-    this._log('rain', 'ฝนตกลงมาในเทอราเรียม');
+    this.rainIntensity = intensity;
+    if (label) this._log('rain', label);
+  }
+
+  /** บันทึกการตาย 1 ครั้ง (ใช้ทั้งสถิติสะสมและการชันสูตร) */
+  _recordDeath(kind, cause, x, z) {
+    const bucket = this.causes[kind];
+    bucket[cause] = (bucket[cause] || 0) + 1;
+    this.recentDeaths.push({ t: this.time, kind, cause });
+    // เก็บย้อนหลังพอสำหรับหน้าต่างชันสูตร
+    while (this.recentDeaths.length && this.time - this.recentDeaths[0].t > 180) {
+      this.recentDeaths.shift();
+    }
+  }
+
+  /** นับสาเหตุการตายของชนิดหนึ่งในช่วง N วินาทีล่าสุด */
+  deathsInWindow(kind, seconds) {
+    const since = this.time - seconds;
+    const tally = {};
+    let total = 0;
+    for (let i = 0; i < this.recentDeaths.length; i++) {
+      const d = this.recentDeaths[i];
+      if (d.t < since || d.kind !== kind) continue;
+      tally[d.cause] = (tally[d.cause] || 0) + 1;
+      total++;
+    }
+    return { tally, total };
+  }
+
+  /**
+   * สร้างรายงานชันสูตรตอนสายพันธุ์หนึ่งหมดไป
+   * ตอบคำถามว่า "ตายเพราะอะไร" และ "ตอนนั้นสภาพแวดล้อมเป็นยังไง"
+   */
+  _buildExtinctionReport(kind) {
+    const window = 120;
+    const { tally, total } = this.deathsInWindow(kind, window);
+    const plantsBefore = [];
+    for (let i = this.history.length - 1; i >= 0 && this.history[i].t > this.time - window; i--) {
+      plantsBefore.push(this.history[i].plants);
+    }
+    const avgPlants = plantsBefore.length
+      ? plantsBefore.reduce((a, b) => a + b, 0) / plantsBefore.length : null;
+    const top = Object.entries(tally).sort((a, b) => b[1] - a[1])[0] || null;
+    const report = {
+      kind,
+      time: this.time,
+      window,
+      tally,
+      total,
+      topCause: top ? top[0] : null,
+      avgPlants,
+      plants: this.plants.length,
+      predators: this.predators.length,
+      herbivores: this.herbivores.length,
+      moisture: this.averageMoisture(),
+      nutrient: this.averageNutrient(),
+      season: this.seasonName,
+    };
+    this.extinctionReports.push(report);
+    return report;
   }
 
   _log(type, text) {
@@ -348,6 +444,13 @@ export class Ecosystem {
     const dt = SIM_DT;
     this.time += dt;
     this.steps++;
+
+    const season = this.seasonName;
+    if (season !== this._lastSeason) {
+      if (this._lastSeason !== null) this._log('season', `เข้าสู่${season}`);
+      this._lastSeason = season;
+    }
+    this._seasonalRain(dt);
 
     this._coverTimer -= dt;
     if (this._coverTimer <= 0) { this._coverTimer = COVER.updateEvery; this._updateCover(); }
@@ -373,6 +476,17 @@ export class Ecosystem {
    *   -> ส่วนใหญ่กลั่นตัวที่ผนังแก้วแล้วตกกลับลงดินอย่างสม่ำเสมอ
    * ทำให้เกิดความชื้นไล่ระดับ (ใกล้แอ่งน้ำชื้นกว่า) และระบบอยู่ตัวได้นาน
    */
+  /** ฤดูฝนมีฝนตกเองเป็นระยะ ยิ่งใกล้กลางฤดูฝนยิ่งบ่อย */
+  _seasonalRain(dt) {
+    if (this.rainTimer > 0) return;
+    const wetness = 1 - this.seasonDryness / (1 + SEASON.amplitude); // 0..1 ยิ่งมากยิ่งชื้น
+    if (wetness <= 0) return;
+    if (this.rng() < SEASON.rainChance * wetness * dt) {
+      this.startRain(SEASON.rainDuration, SEASON.rainIntensity,
+        `ฝนปรอยตามฤดูกาล (${this.seasonName})`);
+    }
+  }
+
   _stepMoisture(dt) {
     const n = this.gridN;
     const m = this.moisture, next = this._moistureNext, pool = this.poolMask;
@@ -380,8 +494,8 @@ export class Ecosystem {
     if (raining) this.rainTimer = Math.max(0, this.rainTimer - dt);
 
     const diff = Math.min(0.22, MOISTURE.diffuse * dt);
-    const evap = this.env.evaporation * dt;
-    const rain = raining ? MOISTURE.rainRate * dt : 0;
+    const evap = this.env.evaporation * this.seasonDryness * dt;
+    const rain = raining ? MOISTURE.rainRate * this.rainIntensity * dt : 0;
     let evaporated = 0;
     let landCells = 0;
 
@@ -482,6 +596,7 @@ export class Ecosystem {
         p.deathCause = p.age > p.maxAge ? 'old' : 'drought';
         this._addDetritus(p.x, p.z, p.size * DETRITUS.fromPlantSize);
         this.totals.deaths.plant++;
+        this._recordDeath('plant', p.deathCause);
         continue;
       }
 
@@ -540,6 +655,7 @@ export class Ecosystem {
         f.alive = false;
         f.deathCause = f.age > f.maxAge ? 'old' : 'starved';
         this.totals.deaths.fungus++;
+        this._recordDeath('fungus', f.deathCause);
         continue;
       }
 
@@ -695,7 +811,8 @@ export class Ecosystem {
       }
 
       const moved = this._moveAnimal(h, spec, speedMul, dt);
-      const burn = h.state === 'rest' ? spec.metabolism * spec.restMetabolism : spec.metabolism;
+      const burn = (h.state === 'rest' ? spec.metabolism * spec.restMetabolism : spec.metabolism)
+        * this._basalFactor(h);
       h.energy -= (burn + spec.moveCost * moved) * dt;
 
       // สืบพันธุ์
@@ -706,6 +823,7 @@ export class Ecosystem {
         h.breedCooldown = spec.breedCooldown;
         const baby = this.addHerbivore(
           h.x + this.rng.spread() * 0.8, h.z + this.rng.spread() * 0.8, spec.breedCost * 0.72,
+          this._inherit(h.speedGene),
         );
         if (baby) { baby.breedCooldown = spec.breedCooldown; this.totals.births.herbivore++; }
       }
@@ -715,6 +833,7 @@ export class Ecosystem {
         h.deathCause = h.energy <= 0 ? 'starved' : 'old';
         this._addDetritus(h.x, h.z, h.maxEnergy * DETRITUS.fromAnimalEnergy);
         this.totals.deaths.herbivore++;
+        this._recordDeath('herbivore', h.deathCause);
       }
     }
   }
@@ -772,6 +891,7 @@ export class Ecosystem {
                 prey.maxEnergy * DETRITUS.fromAnimalEnergy * DETRITUS.eatenFraction);
               this.totals.deaths.herbivore++;
               this.totals.eaten.herbivore++;
+              this._recordDeath('herbivore', 'eaten');
               p.energy = Math.min(p.maxEnergy, p.energy + spec.killGain);
               this._addDetritus(p.x, p.z,
                 prey.maxEnergy * DETRITUS.fromAnimalEnergy * DETRITUS.fromPredation);
@@ -787,7 +907,7 @@ export class Ecosystem {
 
       const gait = p.state === 'hunt' ? spec.huntSpeed : p.state === 'rest' ? 0.45 : 0.72;
       const moved = p.state === 'eat' ? 0 : this._moveAnimal(p, spec, gait, dt);
-      p.energy -= (spec.metabolism + spec.moveCost * moved) * dt;
+      p.energy -= (spec.metabolism * this._basalFactor(p) + spec.moveCost * moved) * dt;
 
       if (p.energy > spec.breedEnergy && p.age > spec.breedAge && p.breedCooldown <= 0
           && this.predators.length < CAPS.predators
@@ -797,7 +917,8 @@ export class Ecosystem {
         if (home) {
           p.energy -= spec.breedCost;
           p.breedCooldown = spec.breedCooldown;
-          const baby = this.addPredator(home.x, home.z, spec.breedCost * 0.72, home);
+          const baby = this.addPredator(home.x, home.z, spec.breedCost * 0.72, home,
+            this._inherit(p.speedGene));
           if (baby) { baby.breedCooldown = spec.breedCooldown; this.totals.births.predator++; }
         } else {
           p.breedCooldown = spec.breedCooldown * 0.5;
@@ -809,6 +930,7 @@ export class Ecosystem {
         p.deathCause = p.energy <= 0 ? 'starved' : 'old';
         this._addDetritus(p.x, p.z, p.maxEnergy * DETRITUS.fromAnimalEnergy);
         this.totals.deaths.predator++;
+        this._recordDeath('predator', p.deathCause);
       }
     }
   }
@@ -844,7 +966,8 @@ export class Ecosystem {
     if (Math.abs(realDx) + Math.abs(realDz) > 1e-5) a.dir = Math.atan2(realDx, realDz);
     a.x = nx; a.z = nz;
     a.moving = Math.min(1, a.moving + dt * 4);
-    return speedMul;
+    // ต้นทุนแปรผันตามกำลังสองของความเร็ว — ตัวที่เร็วกว่าต้องหาอาหารมากกว่า
+    return speedMul * a.speedGene * a.speedGene;
   }
 
   /**
@@ -905,6 +1028,28 @@ export class Ecosystem {
   // ------------------------------------------------------------------ queries
 
   hungerOf(a) { return clamp(1 - a.energy / a.maxEnergy, 0, 1); }
+
+  /**
+   * ตัวคูณค่าใช้จ่ายพลังงานพื้นฐานตามยีนความเร็ว
+   * ตัวที่เร็วกว่ามีกล้ามเนื้อมากกว่า จึงเปลืองพลังงานแม้ตอนไม่ได้วิ่ง
+   */
+  _basalFactor(a) {
+    const k = EVOLUTION.basalCostShare;
+    return (1 - k) + k * a.speedGene * a.speedGene;
+  }
+
+  /** ยีนของลูก = ยีนพ่อแม่ + กลายพันธุ์เล็กน้อย */
+  _inherit(gene) {
+    return clamp(gene * (1 + this.rng.spread() * EVOLUTION.mutation), EVOLUTION.min, EVOLUTION.max);
+  }
+
+  /** ค่าเฉลี่ยยีนความเร็วของประชากร (ใช้ดูทิศทางวิวัฒนาการ) */
+  averageGene(list) {
+    if (!list.length) return null;
+    let sum = 0;
+    for (let i = 0; i < list.length; i++) sum += list[i].speedGene;
+    return sum / list.length;
+  }
 
   _plantById(id) { return id == null ? null : this.plants.find((p) => p.id === id) || null; }
   _herbById(id) { return id == null ? null : this.herbivores.find((h) => h.id === id) || null; }
@@ -1002,14 +1147,16 @@ export class Ecosystem {
       this.herbivores = this.herbivores.filter((h) => h.alive);
       if (!this.herbivores.length && this.extinctAt.herbivore === null) {
         this.extinctAt.herbivore = this.time;
-        this._log('extinct', 'สัตว์กินพืชสูญพันธุ์');
+        const r = this._buildExtinctionReport('herbivore');
+        this._log('extinct', `สัตว์กินพืชสูญพันธุ์ (${CAUSE_TEXT[r.topCause] || 'ไม่ทราบสาเหตุ'})`);
       }
     }
     if (this.predators.some((p) => !p.alive)) {
       this.predators = this.predators.filter((p) => p.alive);
       if (!this.predators.length && this.extinctAt.predator === null) {
         this.extinctAt.predator = this.time;
-        this._log('extinct', 'ผู้ล่าสูญพันธุ์');
+        const r = this._buildExtinctionReport('predator');
+        this._log('extinct', `ผู้ล่าสูญพันธุ์ (${CAUSE_TEXT[r.topCause] || 'ไม่ทราบสาเหตุ'})`);
       }
     }
   }
@@ -1023,6 +1170,9 @@ export class Ecosystem {
       fungi: this.fungi.length,
       moisture: this.averageMoisture(),
       nutrient: this.averageNutrient(),
+      herbGene: this.averageGene(this.herbivores),
+      predGene: this.averageGene(this.predators),
+      season: Math.floor(this.seasonPhase * SEASON.names.length),
       raining: this.rainTimer > 0,
     });
     if (this.history.length > 900) this.history.shift();

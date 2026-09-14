@@ -71,7 +71,8 @@ export class PopulationChart {
       { key: 'herbivores', label: 'สัตว์กินพืช', color: SPECIES_COLORS.herbivore, min: 10, area: true, weight: 1 },
       { key: 'predators', label: 'ผู้ล่า', color: SPECIES_COLORS.predator, min: 4, area: true, weight: 0.85 },
       { key: 'fungi', label: 'ผู้ย่อยสลาย', color: SPECIES_COLORS.fungus, min: 10, area: true, weight: 0.9 },
-      { key: 'moisture', label: 'ความชื้น', color: SPECIES_COLORS.moisture, min: 1, area: true, weight: 0.75, fixed: 1 },
+      { key: 'herbGene', label: 'ยีนความเร็วเหยื่อ', color: SPECIES_COLORS.gene, min: 1, weight: 0.85, range: [0.85, 1.2], decimals: 3 },
+      { key: 'moisture', label: 'ความชื้น', color: SPECIES_COLORS.moisture, min: 1, area: true, weight: 0.7, fixed: 1 },
     ];
     const gap = 7;
     const totalWeight = series.reduce((a, s2) => a + s2.weight, 0);
@@ -80,7 +81,14 @@ export class PopulationChart {
     for (const s2 of series) {
       s2.band = { y, h: (usable * s2.weight) / totalWeight };
       y += s2.band.h + gap;
-      s2.max = s2.fixed || niceMax(Math.max(...data.map((d) => d[s2.key])), s2.min);
+      if (s2.range) {
+        // แถบที่มีช่วงตายตัว (เช่นยีน) ขยายช่วงอัตโนมัติถ้าข้อมูลหลุดกรอบ
+        const vals = data.map((d) => d[s2.key]).filter((v) => v != null);
+        s2.lo = Math.min(s2.range[0], ...vals);
+        s2.hi = Math.max(s2.range[1], ...vals);
+      } else {
+        s2.max = s2.fixed || niceMax(Math.max(...data.map((d) => d[s2.key])), s2.min);
+      }
     }
 
     this._rainBands(data, xOf, PAD.top, innerH);
@@ -88,17 +96,24 @@ export class PopulationChart {
     ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
     for (const s2 of series) {
       this._grid(s2.band, s2.max, 1);
-      this._area(data, s2.band, (d) => d[s2.key], s2.max, s2.color, xOf,
-        s2.key === 'moisture' ? 0.26 : 0.4);
+      if (s2.range) this._ranged(data, s2, xOf);
+      else {
+        this._area(data, s2.band, (d) => d[s2.key], s2.max, s2.color, xOf,
+          s2.key === 'moisture' ? 0.26 : 0.4);
+      }
       // ป้ายกำกับในแถบ
       ctx.textAlign = 'right';
       ctx.fillStyle = 'rgba(240, 222, 198, 0.5)';
-      ctx.fillText(s2.fixed ? '100%' : String(s2.max), PAD.left - 4, s2.band.y + 8);
+      ctx.fillText(s2.range ? s2.hi.toFixed(2) : s2.fixed ? '100%' : String(s2.max),
+        PAD.left - 4, s2.band.y + 8);
+      if (s2.range) ctx.fillText(s2.lo.toFixed(2), PAD.left - 4, s2.band.y + s2.band.h);
       ctx.textAlign = 'left';
       ctx.fillStyle = this._rgba(s2.color, 0.85);
       ctx.font = '10px system-ui, sans-serif';
       const last = data[data.length - 1][s2.key];
-      const value = s2.fixed ? `${Math.round(last * 100)}%` : last;
+      const value = last == null ? '—'
+        : s2.decimals ? last.toFixed(s2.decimals)
+          : s2.fixed ? `${Math.round(last * 100)}%` : last;
       ctx.fillText(`${s2.label} ${value}`, PAD.left + 4, s2.band.y + 10);
       ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
     }
@@ -111,6 +126,35 @@ export class PopulationChart {
     ctx.fillText('ตอนนี้', w - PAD.right - 16, h - 4);
 
     this._hoverReadout(data, xOf);
+  }
+
+  /** เส้นค่าต่อเนื่องที่มีช่วงแกนตายตัว (ใช้กับยีน) — ข้ามช่วงที่ไม่มีประชากร */
+  _ranged(data, s2, xOf) {
+    const ctx = this.ctx;
+    const { band, lo, hi, color } = s2;
+    const yOf = (v) => band.y + band.h - ((v - lo) / (hi - lo || 1)) * band.h;
+    // เส้นอ้างอิงที่ 1.0 = ค่าตั้งต้นของประชากร
+    if (lo < 1 && hi > 1) {
+      ctx.strokeStyle = 'rgba(255, 226, 190, 0.18)';
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(PAD.left, yOf(1));
+      ctx.lineTo(this.w - PAD.right, yOf(1));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.beginPath();
+    let pen = false;
+    for (const d of data) {
+      const v = d[s2.key];
+      if (v == null) { pen = false; continue; }
+      const x = xOf(d.t), y = yOf(v);
+      if (pen) ctx.lineTo(x, y); else { ctx.moveTo(x, y); pen = true; }
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.8;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
   }
 
   /** แถบไฮไลต์ช่วงที่ฝนตก */

@@ -6,6 +6,7 @@ import {
   PRESETS, PRESET_ORDER, SPECIES_COLORS, SECONDS_PER_DAY,
   HERBIVORE, PREDATOR, PLANT, FUNGUS, NUTRIENT,
 } from './config.js';
+import { CAUSE_TEXT } from './simulation.js';
 
 const STATE_LABEL = {
   wander: 'เดินสำรวจ',
@@ -41,7 +42,8 @@ export class UI {
       moisture: $('statMoisture'), bar: $('barMoisture'),
       nutrient: $('statNutrient'), barNutrient: $('barNutrient'),
       time: $('statTime'), day: $('statDay'), speed: $('statSpeed'), state: $('statState'),
-      inspector: $('inspector'), toast: $('toast'),
+      season: $('statSeason'), gene: $('statGene'),
+      inspector: $('inspector'), toast: $('toast'), eventLog: $('eventLog'),
       play: $('btnPlay'), plant: $('btnPlant'), hint: $('actionHint'),
       seed: $('seedInput'), presets: $('presetList'),
       speedRange: $('speed'), speedOut: $('speedOut'),
@@ -71,6 +73,7 @@ export class UI {
     $('btnHerb').addEventListener('click', () => this.h.onAddAnimal('herbivore'));
     $('btnPred').addEventListener('click', () => this.h.onAddAnimal('predator'));
     $('btnRain').addEventListener('click', () => this.h.onRain());
+    $('btnShare').addEventListener('click', () => this.h.onShare());
     this.el.plant.addEventListener('click', () => this.h.onTogglePlant());
     $('applySeed').addEventListener('click', () => this.h.onSeed(this.el.seed.value));
     this.el.seed.addEventListener('keydown', (e) => {
@@ -159,11 +162,18 @@ export class UI {
     this.el.day.textContent = String(Math.floor(sim.time / SECONDS_PER_DAY) + 1);
     this.el.state.textContent = !this.playing ? 'หยุดชั่วคราว'
       : sim.isRaining ? 'ฝนกำลังตก' : 'กำลังเดิน';
+    this.el.season.textContent = sim.seasonName;
+    const gene = sim.averageGene(sim.herbivores);
+    this.el.gene.textContent = gene === null ? '—' : gene.toFixed(3);
 
     const now = performance.now();
     if (now - this._lastInspect > 90) {
       this._lastInspect = now;
       this._renderInspector(sim, selection);
+    }
+    if (now - (this._lastLog || 0) > 400) {
+      this._lastLog = now;
+      this._renderEventLog(sim);
     }
   }
 
@@ -174,6 +184,47 @@ export class UI {
     const diff = h[h.length - 1][key] - past;
     el.textContent = diff === 0 ? '' : `${diff > 0 ? '▲' : '▼'}${Math.abs(diff)}`;
     el.className = diff > 0 ? 'up' : diff < 0 ? 'down' : '';
+  }
+
+  /**
+   * บันทึกเหตุการณ์ + รายงานชันสูตรตอนสายพันธุ์สูญพันธุ์
+   * ใช้ข้อมูลที่ซิมูเลชันเก็บอยู่แล้ว (events, causes, extinctionReports)
+   */
+  _renderEventLog(sim) {
+    const signature = `${sim.events.length}|${sim.extinctionReports.length}|${Math.floor(sim.time)}`;
+    if (signature === this._logSignature) return;
+    this._logSignature = signature;
+
+    const parts = [];
+    for (const r of sim.extinctionReports.slice(-2)) parts.push(this._postmortem(r));
+
+    const recent = sim.events.slice(-7).reverse();
+    if (recent.length) {
+      for (const e of recent) {
+        parts.push(`<div class="event-row" data-type="${e.type}">
+          <time>${fmtTime(e.t)}</time><span>${e.text}</span></div>`);
+      }
+    } else if (!parts.length) {
+      parts.push('<p class="empty-msg">ยังไม่มีเหตุการณ์สำคัญ</p>');
+    }
+    this.el.eventLog.innerHTML = parts.join('');
+  }
+
+  _postmortem(r) {
+    const name = KIND_LABEL[r.kind];
+    const causes = Object.entries(r.tally)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${CAUSE_TEXT[k] || k} ${v}`)
+      .join(' · ') || 'ไม่มีข้อมูล';
+    const plants = r.avgPlants === null ? '—' : r.avgPlants.toFixed(0);
+    return `<div class="postmortem">
+      <div class="pm-head"><b>${name}สูญพันธุ์</b> ที่ ${fmtTime(r.time)}</div>
+      <div class="pm-detail">
+        ${r.window} วินาทีก่อนหน้า ตายไป <em>${r.total}</em> ตัว — ${causes}<br>
+        ช่วงนั้นมีพืชเฉลี่ย <em>${plants}</em> ต้น · ผู้ล่า <em>${r.predators}</em> ตัว ·
+        ความชื้น <em>${Math.round(r.moisture * 100)}%</em> · ${r.season}
+      </div>
+    </div>`;
   }
 
   // --------------------------------------------------------------- inspector
@@ -261,6 +312,10 @@ export class UI {
       else targetText = `<b>เดินไปยังจุดหมาย</b> ห่าง ${d} หน่วย`;
     }
     const canBreed = a.energy > spec.breedEnergy && a.age > spec.breedAge && a.breedCooldown <= 0;
+    const popGene = sim.averageGene(a.kind === 'herbivore' ? sim.herbivores : sim.predators);
+    const diff = popGene === null ? 0 : (a.speedGene - popGene);
+    const geneVsPop = Math.abs(diff) < 0.005 ? 'พอ ๆ กับฝูง'
+      : `${diff > 0 ? 'เร็วกว่า' : 'ช้ากว่า'} ${(Math.abs(diff) * 100).toFixed(1)}%`;
     return `${this._head(a)}
       ${this._bar('พลังงาน', a.energy, a.maxEnergy, SPECIES_COLORS[a.kind], `${a.energy.toFixed(0)} / ${a.maxEnergy}`)}
       ${this._bar('ความหิว', hunger, 1, '#d98a4a', `${Math.round(hunger * 100)}%`)}
@@ -270,6 +325,8 @@ export class UI {
         <div><small>มื้อที่กินแล้ว</small><b>${a.meals}</b></div>
         <div><small>พร้อมสืบพันธุ์</small><b>${canBreed ? 'พร้อม' : `อีก ${Math.max(0, a.breedCooldown).toFixed(0)} วิ`}</b></div>
         <div><small>ที่กำบัง</small><b>${Math.round(sim.coverAt(a.x, a.z) * 100)}%</b></div>
+        <div><small>ยีนความเร็ว</small><b>${a.speedGene.toFixed(3)}</b></div>
+        <div><small>เทียบฝูง</small><b>${geneVsPop}</b></div>
       </div>
       <div class="insp-target">เป้าหมายตอนนี้: ${targetText}<br>
         <small style="color:rgba(246,231,211,.5)">เส้นสีในภาชนะชี้ไปยังเป้าหมายเดียวกันนี้</small></div>`;

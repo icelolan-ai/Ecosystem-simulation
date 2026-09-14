@@ -7,6 +7,7 @@ import { Terrarium } from './scene.js';
 import { PopulationChart } from './chart.js';
 import { UI } from './ui.js';
 import { SIM_DT, MAX_STEPS_PER_FRAME, PRESETS, PRESET_ORDER, PLANT } from './config.js';
+import { readHash, writeHash } from './share.js';
 
 const SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
 
@@ -16,6 +17,10 @@ const state = {
   plantMode: false,
   selection: null,
   presetId: 'balanced',
+  /** การกระทำของผู้ใช้ที่บันทึกไว้ (พร้อม step ที่เกิด) สำหรับแชร์ต่อ */
+  recorded: [],
+  /** การกระทำที่รอเล่นซ้ำจากลิงก์ที่เปิดมา */
+  pending: [],
 };
 
 const canvas = document.getElementById('view');
@@ -27,7 +32,13 @@ let chart;
 let ui;
 
 function boot() {
-  sim = new Ecosystem(state.presetId);
+  // ถ้าเปิดมาจากลิงก์ที่แชร์ ให้ใช้ preset/seed/การกระทำจากลิงก์นั้น
+  const shared = readHash();
+  if (shared && PRESETS[shared.preset]) {
+    state.presetId = shared.preset;
+    state.pending = shared.actions;
+  }
+  sim = new Ecosystem(state.presetId, shared?.seed || undefined);
   try {
     terrarium = new Terrarium(canvas);
   } catch (err) {
@@ -52,7 +63,15 @@ function boot() {
     window.__terrarium = terrarium;
     window.__sim = sim;
     window.__setSelection = (sel) => { state.selection = sel; };
+    // เดินซิมูเลชันผ่านเส้นทางเดียวกับลูปจริง (รวมการเล่นซ้ำการกระทำ) ใช้ในการทดสอบ
+    window.__advance = (n) => {
+      for (let i = 0; i < n; i++) { applyPendingActions(); sim.step(); }
+    };
   }
+  if (state.pending.length) {
+    ui.toast(`กำลังเล่นซ้ำการทดลองที่แชร์มา — มีการกระทำ ${state.pending.length} ครั้งรออยู่`, 4200);
+  }
+
   bindCanvas();
   window.addEventListener('resize', onResize);
   window.addEventListener('keydown', onKey);
@@ -71,7 +90,7 @@ const handlers = {
     // เดินทีละ 1 วินาทีจำลอง สำหรับดูการเปลี่ยนแปลงแบบละเอียด
     state.playing = false;
     ui.setPlaying(false);
-    for (let i = 0; i < Math.round(1 / SIM_DT); i++) sim.step();
+      for (let i = 0; i < Math.round(1 / SIM_DT); i++) { applyPendingActions(); sim.step(); }
     refreshSlowVisuals(true);
   },
   onReset() { applyPreset(state.presetId, sim.seedLabel); ui.toast('เริ่มใหม่ด้วย seed เดิม'); },
@@ -102,18 +121,54 @@ const handlers = {
       return;
     }
     state.selection = { kind, id: added.id };
+    recordAction(kind);
     ui.toast(kind === 'herbivore' ? 'ปล่อยสัตว์กินพืชลงไป 1 ตัว' : 'ปล่อยผู้ล่าลงไป 1 ตัว');
   },
   onRain() {
     sim.startRain();
+    recordAction('rain');
     ui.toast('ฝนกำลังตก ความชื้นในดินจะเพิ่มขึ้น');
   },
+  onShare() {
+    const url = syncUrl();
+    const done = () => ui.toast('คัดลอกลิงก์แล้ว — เปิดที่ไหนก็ได้เทอราเรียมใบเดียวกันเป๊ะ', 3200);
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(done, () => ui.toast(url, 6000));
+    else ui.toast(url, 6000);
+  },
 };
+
+/** ความละเอียดพิกัดที่ URL เก็บได้ (ทศนิยม 1 ตำแหน่ง) */
+function quantize(v) { return Math.round(v * 10) / 10; }
+
+/** บันทึกการกระทำของผู้ใช้ 1 ครั้ง แล้วอัปเดต URL ให้พร้อมคัดลอก */
+function recordAction(kind, x, z) {
+  state.recorded.push({ step: sim.steps, kind, x, z });
+  syncUrl();
+}
+
+function syncUrl() {
+  writeHash({ preset: state.presetId, seed: sim.seedLabel, actions: state.recorded });
+}
+
+/** เล่นซ้ำการกระทำที่ถึงคิวพอดีกับ step ปัจจุบัน */
+function applyPendingActions() {
+  while (state.pending.length && state.pending[0].step <= sim.steps) {
+    const a = state.pending.shift();
+    if (a.kind === 'plant') sim.addPlant(a.x, a.z, PLANT.seedSize);
+    else if (a.kind === 'herbivore') { const p = sim.randomSoilPoint(1.2); sim.addHerbivore(p.x, p.z); }
+    else if (a.kind === 'predator') { const p = sim.randomSoilPoint(1.2); sim.addPredator(p.x, p.z); }
+    else if (a.kind === 'rain') sim.startRain();
+    state.recorded.push(a);
+  }
+}
 
 function applyPreset(id, seed) {
   state.presetId = id;
   sim.reset(id, seed);
   state.selection = null;
+  state.recorded = [];
+  state.pending = [];
+  syncUrl();
   terrarium.setPoolRadius(sim.env.poolRadius);
   terrarium.updateSoilMoisture(sim);
   ui.setPreset(id);
@@ -142,11 +197,16 @@ function handleClick(e) {
   if (state.plantMode) {
     const spot = terrarium.pickSoil(e);
     if (!spot) return;
-    if (Math.hypot(spot.x, spot.z) > 8.6) { ui.toast('ตรงนั้นชิดผนังแก้วเกินไป'); return; }
-    if (sim.isWater(spot.x, spot.z)) { ui.toast('ปลูกในน้ำไม่ได้'); return; }
-    const plant = sim.addPlant(spot.x, spot.z, PLANT.seedSize);
+    // ปัดพิกัดให้เท่ากับความละเอียดที่ URL เก็บได้ตั้งแต่ตอนปลูก
+    // ไม่งั้นการเล่นซ้ำจะเริ่มจากตำแหน่งที่ต่างกันนิดเดียวแล้วบานปลายตามความอลวน
+    const x = quantize(spot.x);
+    const z = quantize(spot.z);
+    if (Math.hypot(x, z) > 8.6) { ui.toast('ตรงนั้นชิดผนังแก้วเกินไป'); return; }
+    if (sim.isWater(x, z)) { ui.toast('ปลูกในน้ำไม่ได้'); return; }
+    const plant = sim.addPlant(x, z, PLANT.seedSize);
     if (!plant) { ui.toast('พืชเต็มเพดานแล้ว'); return; }
     state.selection = { kind: 'plant', id: plant.id };
+    recordAction('plant', x, z);
     return;
   }
   const hit = terrarium.pick(e);
@@ -196,6 +256,7 @@ function loop(now) {
     accumulator += dtReal * SPEEDS[state.speedIndex];
     let steps = 0;
     while (accumulator >= SIM_DT && steps < MAX_STEPS_PER_FRAME) {
+      applyPendingActions();
       sim.step();
       accumulator -= SIM_DT;
       steps++;
