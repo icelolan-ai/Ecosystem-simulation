@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LIVING TERRARIUM — ระบบนิเวศจำลองในภาชนะแก้ว</title>
+<meta name="description" content="ระบบนิเวศจำลองแบบง่ายในภาชนะแก้ว 3 มิติ ด้วย Three.js — พืช สัตว์กินพืช และผู้ล่า ที่มีพลังงาน อายุ ความหิว และเป้าหมายจริง">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌿</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="view"></canvas>
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>LIVING <span>TERRARIUM</span></h1>
+      <p>ระบบนิเวศจำลองในภาชนะแก้ว · ลากเพื่อหมุน เลื่อนเพื่อซูม</p>
+    </div>
+    <div class="topbar-right">
+      <span class="tag" title="แบบจำลองเชิงสาธิต ไม่ใช่แบบจำลองทางชีววิทยาที่แม่นยำ">ระบบนิเวศจำลองแบบง่าย</span>
+      <button class="icon-btn" id="togglePanels" aria-label="ซ่อน/แสดงแผงควบคุม">◧</button>
+    </div>
+  </header>
+
+  <!-- ───────────────────────── แผงซ้าย: ข้อมูลระบบ ───────────────────────── -->
+  <aside class="panel panel-left" id="panelLeft">
+    <section class="card">
+      <h2>สถานะระบบ</h2>
+      <div class="stat-grid">
+        <div class="stat" data-kind="plant">
+          <span class="dot"></span>
+          <div><strong id="statPlants">0</strong><small>พืช</small></div>
+          <em id="trendPlants">·</em>
+        </div>
+        <div class="stat" data-kind="herbivore">
+          <span class="dot"></span>
+          <div><strong id="statHerbs">0</strong><small>สัตว์กินพืช</small></div>
+          <em id="trendHerbs">·</em>
+        </div>
+        <div class="stat" data-kind="predator">
+          <span class="dot"></span>
+          <div><strong id="statPreds">0</strong><small>ผู้ล่า</small></div>
+          <em id="trendPreds">·</em>
+        </div>
+      </div>
+
+      <div class="meter">
+        <div class="meter-head"><span>ความชื้นเฉลี่ยในดิน</span><b id="statMoisture">0%</b></div>
+        <div class="meter-track"><i id="barMoisture"></i></div>
+      </div>
+
+      <div class="mini-grid">
+        <div><small>เวลาจำลอง</small><b id="statTime">0:00</b></div>
+        <div><small>วันที่</small><b id="statDay">1</b></div>
+        <div><small>ความเร็ว</small><b id="statSpeed">1.0×</b></div>
+        <div><small>สถานะ</small><b id="statState">กำลังเดิน</b></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>ประชากรย้อนหลัง</h2>
+        <div class="seg" id="windowSeg">
+          <button data-window="120" class="on">2 น.</button>
+          <button data-window="300">5 น.</button>
+          <button data-window="900">15 น.</button>
+        </div>
+      </div>
+      <canvas id="chart"></canvas>
+      <div class="legend">
+        <span data-kind="plant">พืช</span>
+        <span data-kind="herbivore">สัตว์กินพืช</span>
+        <span data-kind="predator">ผู้ล่า</span>
+        <span data-kind="moisture">ความชื้น / ฝน</span>
+      </div>
+      <p class="note">กราฟอ้างอิงข้อมูลจากซิมูเลชันจริง บันทึกทุก 1 วินาทีจำลอง</p>
+    </section>
+
+    <section class="card">
+      <h2>รูปแบบเริ่มต้น</h2>
+      <div class="preset-list" id="presetList"></div>
+      <div class="seed-row">
+        <label for="seedInput">Seed</label>
+        <input id="seedInput" type="text" spellcheck="false" autocomplete="off">
+        <button class="btn tiny" id="applySeed">ใช้</button>
+      </div>
+      <p class="note">seed เดิม + ลำดับการกระทำเดิม จะให้ผลลัพธ์เหมือนเดิมทุกครั้ง</p>
+    </section>
+  </aside>
+
+  <!-- ───────────────────────── แผงขวา: การควบคุม ───────────────────────── -->
+  <aside class="panel panel-right" id="panelRight">
+    <section class="card">
+      <h2>ควบคุมเวลา</h2>
+      <div class="btn-row">
+        <button class="btn primary" id="btnPlay">หยุดชั่วคราว</button>
+        <button class="btn" id="btnStep" title="เดินทีละ 1 วินาทีจำลอง">ทีละก้าว</button>
+        <button class="btn danger" id="btnReset">เริ่มใหม่</button>
+      </div>
+      <div class="slider-row">
+        <label for="speed">ความเร็วเวลา</label>
+        <input type="range" id="speed" min="0" max="5" step="1" value="2">
+        <output id="speedOut">1.0×</output>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>ลงมือทำ</h2>
+      <div class="btn-row wrap">
+        <button class="btn toggle" id="btnPlant">🌱 ปลูกพืช</button>
+        <button class="btn" id="btnHerb">🐹 เพิ่มสัตว์กินพืช</button>
+        <button class="btn" id="btnPred">🦊 เพิ่มผู้ล่า</button>
+        <button class="btn" id="btnRain">🌧 เรียกฝน</button>
+      </div>
+      <p class="note" id="actionHint">เปิดโหมดปลูกพืชแล้วคลิกบนผิวดินเพื่อหยอดเมล็ด</p>
+    </section>
+
+    <section class="card grow">
+      <h2>สิ่งมีชีวิตที่เลือก</h2>
+      <div id="inspector" class="inspector empty">
+        <p class="empty-msg">คลิกที่พืชหรือสัตว์ในภาชนะ เพื่อดูพลังงาน อายุ ความหิว และเส้นแสดงเป้าหมายปัจจุบัน</p>
+      </div>
+    </section>
+
+    <section class="card collapsible" id="rulesCard">
+      <button class="card-head as-button" id="rulesToggle" aria-expanded="false">
+        <h2>กฎของระบบ</h2><span class="chev">▾</span>
+      </button>
+      <div class="card-body" hidden>
+        <ul class="rules">
+          <li><b>น้ำ</b> — แอ่งน้ำซึมออกไปตามดิน ระเหยขึ้นไปกลั่นตัวที่ผนังแก้วแล้วตกกลับลงมา</li>
+          <li><b>พืช</b> — โตแบบ logistic ตามความชื้น แพร่พันธุ์เมื่อโตเต็มที่ เหี่ยวตายเมื่อดินแห้ง</li>
+          <li><b>สัตว์กินพืช</b> — เดินหาพืช เล็มแต่ไม่ถอนทั้งต้น หนีผู้ล่า และพักเมื่ออิ่ม</li>
+          <li><b>ผู้ล่า</b> — ล่าเหยื่อที่เคลื่อนไหว จับได้ตอนเหยื่อเผลอกินหญ้า หวงอาณาเขตจึงมีจำนวนจำกัด</li>
+          <li><b>พุ่มไม้</b> — ยิ่งรก ยิ่งเป็นที่กำบังให้เหยื่อรอด เป็นวงจรที่ทำให้ระบบไม่ล่มง่าย</li>
+          <li><b>เพดานจำนวน</b> — จำกัดไว้เพื่อคุม performance ไม่ใช่ตัวควบคุมหลักของระบบ</li>
+        </ul>
+        <p class="note">ใช้ fixed timestep (30 ครั้ง/วินาทีจำลอง) และ seeded randomness จึงทดลองซ้ำได้</p>
+      </div>
+    </section>
+  </aside>
+
+  <div class="toast" id="toast" hidden></div>
+  <div class="loading" id="loading"><span></span>กำลังปลูกเทอราเรียม…</div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
