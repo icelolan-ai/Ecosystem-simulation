@@ -12,6 +12,7 @@
 /** ตัวอักษรย่อของการกระทำแต่ละชนิด */
 export const ACTION = {
   plant: 'g',
+  tree: 't',
   herbivore: 'h',
   predator: 'x',
   rain: 'r',
@@ -21,7 +22,7 @@ const FROM_CODE = Object.fromEntries(Object.entries(ACTION).map(([k, v]) => [v, 
 export function encodeActions(actions) {
   return actions.map((a) => {
     const head = `${a.step}${ACTION[a.kind]}`;
-    return a.kind === 'plant' ? `${head}@${a.x.toFixed(1)},${a.z.toFixed(1)}` : head;
+    return a.x !== undefined ? `${head}@${a.x.toFixed(1)},${a.z.toFixed(1)}` : head;
   }).join('!');
 }
 

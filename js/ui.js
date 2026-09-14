@@ -4,7 +4,7 @@
  */
 import {
   PRESETS, PRESET_ORDER, SPECIES_COLORS, SECONDS_PER_DAY,
-  HERBIVORE, PREDATOR, PLANT, FUNGUS, NUTRIENT,
+  HERBIVORE, PREDATOR, PLANT, TREE, FUNGUS, NUTRIENT,
 } from './config.js';
 import { CAUSE_TEXT } from './simulation.js';
 
@@ -18,6 +18,7 @@ const STATE_LABEL = {
 };
 
 const KIND_LABEL = {
+  tree: 'ต้นไม้ใหญ่',
   plant: 'พืช',
   herbivore: 'สัตว์กินพืช',
   predator: 'ผู้ล่า',
@@ -36,15 +37,16 @@ export class UI {
   constructor(handlers) {
     this.h = handlers;
     this.el = {
-      plants: $('statPlants'), herbs: $('statHerbs'), preds: $('statPreds'), fungi: $('statFungi'),
-      trendPlants: $('trendPlants'), trendHerbs: $('trendHerbs'),
+      trees: $('statTrees'), plants: $('statPlants'), herbs: $('statHerbs'),
+      preds: $('statPreds'), fungi: $('statFungi'),
+      trendTrees: $('trendTrees'), trendPlants: $('trendPlants'), trendHerbs: $('trendHerbs'),
       trendPreds: $('trendPreds'), trendFungi: $('trendFungi'),
       moisture: $('statMoisture'), bar: $('barMoisture'),
       nutrient: $('statNutrient'), barNutrient: $('barNutrient'),
       time: $('statTime'), day: $('statDay'), speed: $('statSpeed'), state: $('statState'),
       season: $('statSeason'), gene: $('statGene'),
       inspector: $('inspector'), toast: $('toast'), eventLog: $('eventLog'),
-      play: $('btnPlay'), plant: $('btnPlant'), hint: $('actionHint'),
+      play: $('btnPlay'), plant: $('btnPlant'), tree: $('btnTree'), hint: $('actionHint'),
       seed: $('seedInput'), presets: $('presetList'),
       speedRange: $('speed'), speedOut: $('speedOut'),
     };
@@ -74,7 +76,8 @@ export class UI {
     $('btnPred').addEventListener('click', () => this.h.onAddAnimal('predator'));
     $('btnRain').addEventListener('click', () => this.h.onRain());
     $('btnShare').addEventListener('click', () => this.h.onShare());
-    this.el.plant.addEventListener('click', () => this.h.onTogglePlant());
+    this.el.plant.addEventListener('click', () => this.h.onTogglePlant('plant'));
+    this.el.tree.addEventListener('click', () => this.h.onTogglePlant('tree'));
     $('applySeed').addEventListener('click', () => this.h.onSeed(this.el.seed.value));
     this.el.seed.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.h.onSeed(this.el.seed.value);
@@ -110,11 +113,15 @@ export class UI {
     this.el.play.textContent = playing ? 'หยุดชั่วคราว' : 'เดินต่อ';
   }
 
-  setPlantMode(on) {
-    this.el.plant.classList.toggle('on', on);
-    this.el.hint.textContent = on
-      ? 'คลิกบนผิวดินเพื่อหยอดเมล็ด (คลิกปุ่มอีกครั้งเพื่อปิดโหมด)'
-      : 'เปิดโหมดปลูกพืชแล้วคลิกบนผิวดินเพื่อหยอดเมล็ด';
+  /** mode: null | 'plant' | 'tree' */
+  setPlantMode(mode) {
+    this.el.plant.classList.toggle('on', mode === 'plant');
+    this.el.tree.classList.toggle('on', mode === 'tree');
+    this.el.hint.textContent = mode === 'plant'
+      ? 'คลิกบนผิวดินเพื่อหยอดเมล็ดพืช (คลิกปุ่มอีกครั้งเพื่อปิดโหมด)'
+      : mode === 'tree'
+        ? 'คลิกบนผิวดินเพื่อปลูกต้นกล้าไม้ใหญ่ (คลิกปุ่มอีกครั้งเพื่อปิดโหมด)'
+        : 'เปิดโหมดปลูกแล้วคลิกบนผิวดินเพื่อหยอดเมล็ดหรือปลูกต้นไม้';
   }
 
   setSpeed(index, multiplier) {
@@ -140,11 +147,13 @@ export class UI {
   /** อัปเดตตัวเลขสถานะทั้งหมด (เรียกได้ทุกเฟรม ราคาถูกพอ) */
   update(sim, selection) {
     const c = sim.counts;
+    this.el.trees.textContent = c.trees;
     this.el.plants.textContent = c.plants;
     this.el.herbs.textContent = c.herbivores;
     this.el.preds.textContent = c.predators;
     this.el.fungi.textContent = c.fungi;
 
+    this._trend(this.el.trendTrees, sim, 'trees');
     this._trend(this.el.trendPlants, sim, 'plants');
     this._trend(this.el.trendHerbs, sim, 'herbivores');
     this._trend(this.el.trendPreds, sim, 'predators');
@@ -235,12 +244,13 @@ export class UI {
     if (!e) {
       if (!box.classList.contains('empty')) {
         box.classList.add('empty');
-        box.innerHTML = '<p class="empty-msg">คลิกที่พืชหรือสัตว์ในภาชนะ เพื่อดูพลังงาน อายุ ความหิว และเส้นแสดงเป้าหมายปัจจุบัน</p>';
+        box.innerHTML = '<p class="empty-msg">คลิกที่ต้นไม้ พืช หรือสัตว์บนเกาะ เพื่อดูพลังงาน อายุ ความหิว และเส้นแสดงเป้าหมายปัจจุบัน</p>';
       }
       return;
     }
     box.classList.remove('empty');
-    box.innerHTML = e.kind === 'plant' ? this._plantCard(sim, e)
+    box.innerHTML = e.kind === 'tree' ? this._treeCard(sim, e)
+      : e.kind === 'plant' ? this._plantCard(sim, e)
       : e.kind === 'fungus' ? this._fungusCard(sim, e)
         : this._animalCard(sim, e);
   }
@@ -259,6 +269,26 @@ export class UI {
       <span class="dot" style="background:${color};box-shadow:0 0 10px ${color}"></span>
       <b>${KIND_LABEL[e.kind]}</b><span>#${e.id}</span>
     </div>`;
+  }
+
+  _treeCard(sim, t) {
+    const moist = sim.moistureAt(t.x, t.z);
+    const nutrient = sim.nutrientAt(t.x, t.z);
+    const status = moist < TREE.wiltMoisture ? 'ขาดน้ำ กำลังยืนต้นแห้ง'
+      : t.size > TREE.matureSize ? 'โตเต็มวัย แพร่เมล็ดได้'
+        : 'ยังเป็นต้นอ่อน';
+    return `${this._head(t)}
+      ${this._bar('ขนาดทรงพุ่ม', t.size, 1, SPECIES_COLORS.tree, `${Math.round(t.size * 100)}%`)}
+      ${this._bar('ความสมบูรณ์', t.health, 1, '#7ba659', `${Math.round(t.health * 100)}%`)}
+      ${this._bar('ความชื้นที่จุดนี้', moist, 1, SPECIES_COLORS.moisture, `${Math.round(moist * 100)}%`)}
+      ${this._bar('ธาตุอาหารที่จุดนี้', nutrient, 1, SPECIES_COLORS.fungus, `${Math.round(nutrient * 100)}%`)}
+      <div class="insp-facts">
+        <div><small>อายุ</small><b>${t.age.toFixed(0)} / ${t.maxAge.toFixed(0)} วิ</b></div>
+        <div><small>ใบร่วงสะสม</small><b>${t.shed.toFixed(2)} หน่วย</b></div>
+      </div>
+      <div class="insp-target">สถานะ: <b>${status}</b><br>
+        ต้นไม้ใหญ่ไม่เคลื่อนที่ — ดูดน้ำและธาตุอาหารลึกกว่าพืชเล็ก
+        แล้วทิ้งใบลงดินเรื่อย ๆ เป็นอาหารของผู้ย่อยสลาย ทรงพุ่มยังเป็นที่กำบังชั้นดีให้สัตว์กินพืช</div>`;
   }
 
   _plantCard(sim, p) {
@@ -329,6 +359,6 @@ export class UI {
         <div><small>เทียบฝูง</small><b>${geneVsPop}</b></div>
       </div>
       <div class="insp-target">เป้าหมายตอนนี้: ${targetText}<br>
-        <small style="color:rgba(246,231,211,.5)">เส้นสีในภาชนะชี้ไปยังเป้าหมายเดียวกันนี้</small></div>`;
+        <small style="color:rgba(246,231,211,.5)">เส้นสีในฉากชี้ไปยังเป้าหมายเดียวกันนี้</small></div>`;
   }
 }

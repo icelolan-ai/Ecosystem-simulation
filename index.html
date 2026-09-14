@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>LIVING TERRARIUM — ระบบนิเวศจำลองในภาชนะแก้ว</title>
-<meta name="description" content="ระบบนิเวศจำลองแบบง่ายในภาชนะแก้ว 3 มิติ ด้วย Three.js — พืช สัตว์กินพืช และผู้ล่า ที่มีพลังงาน อายุ ความหิว และเป้าหมายจริง">
+<title>LIVING TERRARIUM — ระบบนิเวศจำลองบนเกาะเปิด</title>
+<meta name="description" content="ระบบนิเวศจำลองแบบง่ายบนเกาะ 3 มิติ ด้วย Three.js — พืช สัตว์กินพืช และผู้ล่า ที่มีพลังงาน อายุ ความหิว และเป้าหมายจริง">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌿</text></svg>">
 <link rel="stylesheet" href="css/style.css">
 </head>
@@ -15,7 +15,7 @@
   <header class="topbar">
     <div class="brand">
       <h1>LIVING <span>TERRARIUM</span></h1>
-      <p>ระบบนิเวศจำลองในภาชนะแก้ว · ลากเพื่อหมุน เลื่อนเพื่อซูม</p>
+      <p>ระบบนิเวศจำลองบนเกาะเปิด · ลากเพื่อหมุน เลื่อนเพื่อซูมเข้าไปดูใกล้ ๆ</p>
     </div>
     <div class="topbar-right">
       <span class="tag" title="แบบจำลองเชิงสาธิต ไม่ใช่แบบจำลองทางชีววิทยาที่แม่นยำ">ระบบนิเวศจำลองแบบง่าย</span>
@@ -28,6 +28,11 @@
     <section class="card">
       <h2>สถานะระบบ</h2>
       <div class="stat-grid">
+        <div class="stat" data-kind="tree">
+          <span class="dot"></span>
+          <div><strong id="statTrees">0</strong><small>ต้นไม้ใหญ่</small></div>
+          <em id="trendTrees">·</em>
+        </div>
         <div class="stat" data-kind="plant">
           <span class="dot"></span>
           <div><strong id="statPlants">0</strong><small>พืช</small></div>
@@ -81,6 +86,7 @@
       </div>
       <canvas id="chart"></canvas>
       <div class="legend">
+        <span data-kind="tree">ต้นไม้ใหญ่</span>
         <span data-kind="plant">พืช</span>
         <span data-kind="herbivore">สัตว์กินพืช</span>
         <span data-kind="predator">ผู้ล่า</span>
@@ -130,6 +136,7 @@
       <h2>ลงมือทำ</h2>
       <div class="btn-row wrap">
         <button class="btn toggle" id="btnPlant">🌱 ปลูกพืช</button>
+        <button class="btn toggle" id="btnTree">🌳 ปลูกต้นไม้</button>
         <button class="btn" id="btnHerb">🐹 เพิ่มสัตว์กินพืช</button>
         <button class="btn" id="btnPred">🦊 เพิ่มผู้ล่า</button>
         <button class="btn" id="btnRain">🌧 เรียกฝน</button>
@@ -141,7 +148,7 @@
     <section class="card grow">
       <h2>สิ่งมีชีวิตที่เลือก</h2>
       <div id="inspector" class="inspector empty">
-        <p class="empty-msg">คลิกที่พืชหรือสัตว์ในภาชนะ เพื่อดูพลังงาน อายุ ความหิว และเส้นแสดงเป้าหมายปัจจุบัน</p>
+        <p class="empty-msg">คลิกที่ต้นไม้ พืช หรือสัตว์บนเกาะ เพื่อดูพลังงาน อายุ ความหิว และเส้นแสดงเป้าหมายปัจจุบัน</p>
       </div>
     </section>
 
@@ -151,10 +158,13 @@
       </button>
       <div class="card-body" hidden>
         <ul class="rules">
-          <li><b>น้ำ</b> — แอ่งน้ำซึมออกไปตามดิน ระเหยขึ้นไปกลั่นตัวที่ผนังแก้วแล้วตกกลับลงมา</li>
+          <li><b>น้ำ</b> — แอ่งน้ำซึมออกไปตามดิน ระเหยขึ้นไปแล้วกลั่นกลับลงมาเป็นน้ำค้างทั่วเกาะ</li>
           <li><b>พืช</b> — โตแบบ logistic ตามความชื้น แพร่พันธุ์เมื่อโตเต็มที่ เหี่ยวตายเมื่อดินแห้ง</li>
           <li><b>สัตว์กินพืช</b> — เดินหาพืช เล็มแต่ไม่ถอนทั้งต้น หนีผู้ล่า และพักเมื่ออิ่ม</li>
           <li><b>ผู้ล่า</b> — ล่าเหยื่อที่เคลื่อนไหว จับได้ตอนเหยื่อเผลอกินหญ้า หวงอาณาเขตจึงมีจำนวนจำกัด</li>
+          <li><b>ต้นไม้ใหญ่</b> — โตช้า อายุยืน ดูดน้ำและธาตุอาหารมากกว่าพืชเล็ก
+            ทิ้งใบลงดินเป็นอาหารของผู้ย่อยสลาย และทรงพุ่มเป็นที่กำบังที่หนากว่าพุ่มไม้มาก
+            (ตอนพืชถูกเล็มเกลี้ยง ใต้ทรงพุ่มยังกำบังอยู่ ~0.9 ขณะที่พื้นโล่งเหลือ ~0.2)</li>
           <li><b>พุ่มไม้</b> — ยิ่งรก ยิ่งเป็นที่กำบังให้เหยื่อรอด เป็นวงจรที่ทำให้ระบบไม่ล่มง่าย</li>
           <li><b>ผู้ย่อยสลาย</b> — เห็ดราขึ้นบนซากและมูลสัตว์ ย่อยแล้วคืนธาตุอาหารลงดิน
             จำนวนเห็ดราจึงสะท้อนว่าเพิ่งมีความตายมากแค่ไหน</li>
@@ -162,7 +172,8 @@
           <li><b>ฤดูกาล</b> — ฤดูแล้งระเหยเร็ว ฤดูฝนมีฝนปรอยเป็นระยะ 1 ปี = 6 นาทีจำลอง</li>
           <li><b>วิวัฒนาการ</b> — ยีนความเร็วสืบทอดถึงลูกพร้อมกลายพันธุ์ ตัวที่เร็วกว่าหนีเก่งกว่า
             แต่เปลืองพลังงานมากกว่า จุดเหมาะสมจึงขยับตามแรงกดดันจากการล่า</li>
-          <li><b>เพดานจำนวน</b> — จำกัดไว้เพื่อคุม performance ไม่ใช่ตัวควบคุมหลักของระบบ</li>
+          <li><b>เพดานจำนวน</b> — คุมต้นทุนการเรนเดอร์ <b>และ</b> หน่วงการบูมไปด้วย
+            (ทดลองยกเพดานขึ้นแล้ววัดได้ว่าอัตราการอยู่รอดตกลง เพราะ overshoot แรงขึ้น)</li>
         </ul>
         <p class="note">ใช้ fixed timestep (30 ครั้ง/วินาทีจำลอง) และ seeded randomness จึงทดลองซ้ำได้</p>
       </div>

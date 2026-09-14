@@ -6,7 +6,7 @@ import { Ecosystem } from './simulation.js';
 import { Terrarium } from './scene.js';
 import { PopulationChart } from './chart.js';
 import { UI } from './ui.js';
-import { SIM_DT, MAX_STEPS_PER_FRAME, PRESETS, PRESET_ORDER, PLANT } from './config.js';
+import { SIM_DT, MAX_STEPS_PER_FRAME, PRESETS, PRESET_ORDER, PLANT, TREE, WORLD } from './config.js';
 import { readHash, writeHash } from './share.js';
 
 const SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
@@ -14,7 +14,7 @@ const SPEEDS = [0.25, 0.5, 1, 2, 4, 8];
 const state = {
   playing: true,
   speedIndex: 2,
-  plantMode: false,
+  plantMode: null,
   selection: null,
   presetId: 'balanced',
   /** การกระทำของผู้ใช้ที่บันทึกไว้ (พร้อม step ที่เกิด) สำหรับแชร์ต่อ */
@@ -108,10 +108,10 @@ const handlers = {
     ui.setSpeed(index, SPEEDS[index]);
   },
   onWindow(seconds) { chart.setWindow(seconds); chart.draw(sim.history); },
-  onTogglePlant() {
-    state.plantMode = !state.plantMode;
+  onTogglePlant(mode) {
+    state.plantMode = state.plantMode === mode ? null : mode;
     ui.setPlantMode(state.plantMode);
-    canvas.classList.toggle('planting', state.plantMode);
+    canvas.classList.toggle('planting', state.plantMode != null);
   },
   onAddAnimal(kind) {
     const p = sim.randomSoilPoint(1.2);
@@ -155,6 +155,7 @@ function applyPendingActions() {
   while (state.pending.length && state.pending[0].step <= sim.steps) {
     const a = state.pending.shift();
     if (a.kind === 'plant') sim.addPlant(a.x, a.z, PLANT.seedSize);
+    else if (a.kind === 'tree') sim.addTree(a.x, a.z, TREE.seedSize);
     else if (a.kind === 'herbivore') { const p = sim.randomSoilPoint(1.2); sim.addHerbivore(p.x, p.z); }
     else if (a.kind === 'predator') { const p = sim.randomSoilPoint(1.2); sim.addPredator(p.x, p.z); }
     else if (a.kind === 'rain') sim.startRain();
@@ -201,12 +202,13 @@ function handleClick(e) {
     // ไม่งั้นการเล่นซ้ำจะเริ่มจากตำแหน่งที่ต่างกันนิดเดียวแล้วบานปลายตามความอลวน
     const x = quantize(spot.x);
     const z = quantize(spot.z);
-    if (Math.hypot(x, z) > 8.6) { ui.toast('ตรงนั้นชิดผนังแก้วเกินไป'); return; }
+    if (Math.hypot(x, z) > WORLD.radius - 0.5) { ui.toast('ตรงนั้นเลยขอบเกาะไปแล้ว'); return; }
     if (sim.isWater(x, z)) { ui.toast('ปลูกในน้ำไม่ได้'); return; }
-    const plant = sim.addPlant(x, z, PLANT.seedSize);
-    if (!plant) { ui.toast('พืชเต็มเพดานแล้ว'); return; }
-    state.selection = { kind: 'plant', id: plant.id };
-    recordAction('plant', x, z);
+    const kind = state.plantMode;
+    const added = kind === 'tree' ? sim.addTree(x, z, TREE.seedSize) : sim.addPlant(x, z, PLANT.seedSize);
+    if (!added) { ui.toast(kind === 'tree' ? 'ต้นไม้ใหญ่เต็มเพดานแล้ว' : 'พืชเต็มเพดานแล้ว'); return; }
+    state.selection = { kind: added.kind, id: added.id };
+    recordAction(kind, x, z);
     return;
   }
   const hit = terrarium.pick(e);

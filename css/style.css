@@ -8,6 +8,7 @@
   --panel-line: rgba(255, 208, 150, 0.14);
   --amber: #e8a23d;
   --amber-soft: rgba(232, 162, 61, 0.16);
+  --tree: #4f7a46;
   --plant: #7fb069;
   --herb: #e6b24a;
   --pred: #d9643a;
@@ -166,6 +167,7 @@ body.panels-hidden .panel-right { transform: translateX(120%); opacity: 0; }
   border: 1px solid transparent;
 }
 .stat .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.stat[data-kind="tree"] .dot { background: var(--tree); box-shadow: 0 0 10px var(--tree); }
 .stat[data-kind="plant"] .dot { background: var(--plant); box-shadow: 0 0 10px var(--plant); }
 .stat[data-kind="herbivore"] .dot { background: var(--herb); box-shadow: 0 0 10px var(--herb); }
 .stat[data-kind="predator"] .dot { background: var(--pred); box-shadow: 0 0 10px var(--pred); }
@@ -219,6 +221,7 @@ body.panels-hidden .panel-right { transform: translateX(120%); opacity: 0; }
 .legend span::before {
   content: ""; width: 9px; height: 3px; border-radius: 2px; background: currentColor;
 }
+.legend [data-kind="tree"] { color: var(--tree); }
 .legend [data-kind="plant"] { color: var(--plant); }
 .legend [data-kind="herbivore"] { color: var(--herb); }
 .legend [data-kind="predator"] { color: var(--pred); }
@@ -236,6 +239,8 @@ body.panels-hidden .panel-right { transform: translateX(120%); opacity: 0; }
 /* ───────────────────────────── controls ───────────────────────────── */
 .btn-row { display: flex; gap: 8px; }
 .btn-row.wrap { flex-wrap: wrap; }
+/* ปุ่มยาว ๆ ต้องได้ขึ้นบรรทัดใหม่ ไม่ใช่โดนบีบจนข้อความขาด */
+.btn-row.wrap .btn { flex: 1 1 auto; min-width: fit-content; }
 .btn {
   flex: 1;
   min-width: 0;

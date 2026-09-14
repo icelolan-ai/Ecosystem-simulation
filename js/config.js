@@ -54,28 +54,47 @@ export const EVOLUTION = {
   basalCostShare: 0.28,
 };
 
+/**
+ * ขนาดโลก — ปรับได้ที่ `radius` ค่าเดียว ส่วนที่เหลือคำนวณตามพื้นที่ให้เอง
+ *
+ * สิ่งที่ scale ตามพื้นที่: เพดานจำนวน จำนวนเริ่มต้น ความละเอียดตาราง ขนาดแอ่งน้ำ
+ * สิ่งที่ **ไม่** scale: ระยะการมองเห็น ระยะหนี ขนาดอาณาเขต — สัตว์ตัวหนึ่งไม่ได้
+ * มองไกลขึ้นเพราะแผนที่ใหญ่ขึ้น ผลคือแผนที่ใหญ่มีที่หลบภัยมากกว่าโดยธรรมชาติ
+ */
+export const WORLD = {
+  radius: 18,         // รัศมีผิวดิน
+  soilY: 0,           // ระดับผิวดิน
+  poolDepth: 0.8,
+};
+
+/** พื้นที่ผิวดิน ใช้คำนวณทุกอย่างที่ควรโตตามแผนที่ */
+export const WORLD_AREA = Math.PI * WORLD.radius * WORLD.radius;
+/** ขนาดช่องตารางเป้าหมาย (หน่วยโลก) — คงที่ไม่ว่าแผนที่จะใหญ่แค่ไหน */
+const CELL = 0.5625;
+WORLD.gridN = Math.round((WORLD.radius * 2) / CELL);
+WORLD.poolRadius = WORLD.radius * 0.278;
+WORLD.poolCenter = { x: -WORLD.radius * 0.289, z: WORLD.radius * 0.244 };
+
+/** จำนวนต่อ 1 หน่วยพื้นที่ ใช้คำนวณเพดานและจำนวนเริ่มต้น */
+const PER_AREA = {
+  plants: 1.02, herbivores: 0.315, predators: 0.063, fungi: 0.51, trees: 0.045,
+};
+const scaled = (density) => Math.round(density * WORLD_AREA);
+
 /** ตารางหยาบสำหรับคำนวณ "ความรก" ของพุ่มไม้ (ที่กำบัง) */
 export const COVER = {
-  gridN: 12,
+  gridN: Math.round((WORLD.radius * 2) / 1.5),
   full: 1.7,              // ผลรวมขนาดพืชต่อช่องที่ถือว่ากำบังเต็มที่
   updateEvery: 0.5,       // อัปเดตทุกกี่วินาทีจำลอง
 };
 
-export const WORLD = {
-  radius: 9,          // รัศมีผิวดินในภาชนะ
-  gridN: 32,          // ความละเอียดตารางความชื้น
-  soilY: 0,           // ระดับผิวดิน
-  poolCenter: { x: -2.6, z: 2.2 },
-  poolRadius: 2.5,
-  poolDepth: 0.55,
-};
-
 /** เพดานจำนวนสิ่งมีชีวิต เพื่อคุม performance และกัน population ระเบิด */
 export const CAPS = {
-  plants: 260,
-  herbivores: 80,
-  predators: 16,
-  fungi: 130,
+  trees: scaled(PER_AREA.trees),
+  plants: scaled(PER_AREA.plants),
+  herbivores: scaled(PER_AREA.herbivores),
+  predators: scaled(PER_AREA.predators),
+  fungi: scaled(PER_AREA.fungi),
 };
 
 /**
@@ -129,6 +148,37 @@ export const FUNGUS = {
   spreadRadius: [0.7, 2.2],
   crowdRadius: 0.9,
   crowdLimit: 3,
+};
+
+/**
+ * ต้นไม้ใหญ่ — โตช้า อายุยืน สัตว์กินพืชกินไม่ถึง
+ *
+ * บทบาทในระบบ (ไม่ใช่ของประดับ):
+ *  1. เป็นที่กำบังชั้นดี — 1 ต้นให้ร่มเงาเท่าพุ่มไม้หลายพุ่ม เหยื่อจึงหลบผู้ล่าได้
+ *  2. ทิ้งใบร่วงตลอดเวลา -> ซากอินทรีย์ -> เห็ดราย่อย -> ธาตุอาหารกลับลงดิน
+ *     ต้นไม้จึงเป็นเครื่องสูบสารอาหารจากดินลึกขึ้นมาหมุนเวียนให้พืชเล็ก
+ *  3. แย่งน้ำและธาตุอาหารกับพืชเล็กด้วย จึงไม่ได้ดีต่อระบบไปเสียทุกทาง
+ */
+export const TREE = {
+  seedSize: 0.1,
+  matureSize: 0.55,
+  growthRate: 0.085,      // โตช้ากว่าพืชเล็กมาก
+  maxAge: 620,
+  wiltMoisture: 0.12,     // ทนแล้งกว่าพืชเล็ก (รากลึกกว่า)
+  wiltRate: 0.02,
+  deathSize: 0.03,
+  drinkRate: 0.04,
+  nutrientDraw: 0.35,
+  /** ใบร่วงต่อวินาทีต่อขนาด 1 หน่วย */
+  litterRate: 0.016,
+  /** ซากที่ได้ตอนต้นไม้ล้ม */
+  deadwood: 1.4,
+  /** น้ำหนักในการคำนวณที่กำบัง เทียบกับพืชเล็กขนาดเท่ากัน */
+  coverWeight: 4.5,
+  seedRate: 0.014,
+  seedRadius: [2.5, 6.5],
+  crowdRadius: 3.4,
+  crowdLimit: 1,
 };
 
 export const PLANT = {
@@ -251,36 +301,49 @@ export const MOISTURE = {
  * Preset ทั้งสาม — ต่างกันที่สภาพแวดล้อมและจำนวนเริ่มต้น
  * ค่าใน `env` จะถูก merge ทับค่าพื้นฐานด้านบน
  */
+/** แปลงจำนวนเริ่มต้นที่ปรับไว้กับแผนที่รัศมี 9 ให้เข้ากับขนาดแผนที่ปัจจุบัน */
+const BASE_AREA = Math.PI * 9 * 9;
+const startFor = (counts) => {
+  const k = WORLD_AREA / BASE_AREA;
+  return {
+    trees: Math.round((counts.trees ?? 4) * k),
+    plants: Math.round(counts.plants * k),
+    herbivores: Math.round(counts.herbivores * k),
+    predators: Math.round(counts.predators * k),
+  };
+};
+
 export const PRESETS = {
   balanced: {
     id: 'balanced',
     name: 'สมดุล',
     desc: 'ความชื้นพอเหมาะ ประชากรแกว่งเป็นวัฏจักรล่า–เหยื่อได้นานหลายนาที',
     seed: 'mossgarden',
-    env: { evaporation: 0.055, condensation: 0.86, poolRadius: 2.5 },
-    start: { plants: 52, herbivores: 9, predators: 3 },
+    env: { evaporation: 0.055, condensation: 0.86, poolRadius: WORLD.poolRadius },
+    start: startFor({ plants: 52, herbivores: 9, predators: 3 }),
   },
   drought: {
     id: 'drought',
     name: 'ภัยแล้ง',
     desc: 'แอ่งน้ำเล็ก ระเหยเร็ว ดินแห้งลงเรื่อย ๆ กดเรียกฝนเพื่อยื้อระบบไว้',
     seed: 'umber',
-    env: { evaporation: 0.070, condensation: 0.62, poolRadius: 1.4 },
-    start: { plants: 48, herbivores: 12, predators: 2 },
+    env: { evaporation: 0.070, condensation: 0.62, poolRadius: WORLD.radius * 0.156 },
+    start: startFor({ plants: 48, herbivores: 12, predators: 2 }),
   },
   predatorBoom: {
     id: 'predatorBoom',
     name: 'ผู้ล่ามากเกินไป',
     desc: 'ผู้ล่าเกินที่ระบบรับไหว เหยื่อร่วงก่อน ผู้ล่าอดตายตาม แล้วดูการฟื้นตัว',
     seed: 'fang',
-    env: { evaporation: 0.055, condensation: 0.86, poolRadius: 2.5 },
-    start: { plants: 70, herbivores: 26, predators: 11 },
+    env: { evaporation: 0.055, condensation: 0.86, poolRadius: WORLD.poolRadius },
+    start: startFor({ plants: 70, herbivores: 26, predators: 11 }),
   },
 };
 
 export const PRESET_ORDER = ['balanced', 'drought', 'predatorBoom'];
 
 export const SPECIES_COLORS = {
+  tree: '#4f7a46',
   plant: '#7fb069',
   herbivore: '#e6b24a',
   predator: '#d9643a',

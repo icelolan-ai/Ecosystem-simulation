@@ -8,10 +8,10 @@ import * as THREE from './vendor/three.module.min.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { mergeGeometries } from './vendor/BufferGeometryUtils.js';
 import { RoomEnvironment } from './vendor/RoomEnvironment.js';
-import { WORLD, CAPS, HERBIVORE, PREDATOR, SECONDS_PER_DAY } from './config.js';
+import { WORLD, WORLD_AREA, CAPS, HERBIVORE, PREDATOR, SECONDS_PER_DAY } from './config.js';
 import { makeRng } from './rng.js';
 
-const JAR_HEIGHT = 9.6;
+const SKY_HEIGHT = 12;
 const OBJ = new THREE.Object3D();
 const COL = new THREE.Color();
 
@@ -38,6 +38,11 @@ const PALETTE = {
   predEar: 0x8f3a1e,
   predLeg: 0x8a3f22,
   eye: 0x241610,
+  bark: 0x6b4a33,
+  barkLight: 0x86603f,
+  canopy: 0x4f7a46,
+  canopyLit: 0x7ba659,
+  canopyDeep: 0x3a5e36,
   fungusCap: 0xc9a0dc,
   fungusCapPale: 0xe3cdf0,
   fungusStem: 0xf0e4d4,
@@ -98,7 +103,7 @@ export class Terrarium {
     this.renderer.toneMappingExposure = 1.16;
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x2b1b12, 0.0055);
+    this.scene.fog = new THREE.FogExp2(0x2b1b12, 0.0032);
 
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
     this.camera.position.set(18.5, 15, 27);
@@ -108,8 +113,8 @@ export class Terrarium {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.06;
     this.controls.target.set(0, 3.0, 0);
-    this.controls.minDistance = 11;
-    this.controls.maxDistance = 95;
+    this.controls.minDistance = 2.5;
+    this.controls.maxDistance = 140;
     this.controls.minPolarAngle = 0.25;
     this.controls.maxPolarAngle = 1.48;
     this.controls.rotateSpeed = 0.75;
@@ -124,7 +129,7 @@ export class Terrarium {
     this._buildBackdrop();
     this._buildTerrain();
     this._buildDecor();
-    this._buildGlass();
+    this._buildEdge();
     this._buildCreatures();
     this._buildSelection();
     this._buildWeather();
@@ -226,7 +231,7 @@ export class Terrarium {
 
   _buildTerrain() {
     const R = WORLD.radius;
-    const seg = 88;
+    const seg = Math.min(150, Math.round((R * 2) / 0.42));
     const geo = new THREE.PlaneGeometry(R * 2, R * 2, seg, seg);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position;
@@ -281,21 +286,14 @@ export class Terrarium {
 
     // ฐานไม้
     const plate = new THREE.Mesh(
-      new THREE.CylinderGeometry(R + 1.5, R + 1.9, 0.9, 72),
-      new THREE.MeshStandardMaterial({ color: PALETTE.base, roughness: 0.85 }),
+      new THREE.CylinderGeometry(R + 0.2, R - 1.6, 1.1, 96),
+      new THREE.MeshStandardMaterial({ color: PALETTE.base, roughness: 0.9 }),
     );
-    plate.position.y = -3.05;
+    plate.position.y = -3.1;
     plate.receiveShadow = true;
     plate.castShadow = true;
     this.scene.add(plate);
 
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(R + 0.62, 0.22, 10, 80),
-      new THREE.MeshStandardMaterial({ color: PALETTE.baseRim, roughness: 0.6, metalness: 0.15 }),
-    );
-    ring.rotation.x = Math.PI / 2;
-    ring.position.y = -2.45;
-    this.scene.add(ring);
 
     this._buildWater();
   }
@@ -334,7 +332,8 @@ export class Terrarium {
     const mossMat = new THREE.MeshStandardMaterial({ color: 0x6f9a52, roughness: 1, flatShading: true });
     const group = new THREE.Group();
 
-    for (let i = 0; i < 9; i++) {
+    const areaScale = WORLD_AREA / (Math.PI * 81);
+    for (let i = 0; i < Math.round(9 * areaScale); i++) {
       const a = rng() * Math.PI * 2;
       const rad = 2.2 + rng() * (WORLD.radius - 3.2);
       const x = Math.cos(a) * rad, z = Math.sin(a) * rad;
@@ -351,7 +350,7 @@ export class Terrarium {
     }
 
     // ก้อนมอสส์แบน ๆ กระจายรอบแอ่งน้ำ
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < Math.round(16 * areaScale); i++) {
       const a = rng() * Math.PI * 2;
       const rad = WORLD.poolRadius + 0.4 + rng() * 2.4;
       const x = WORLD.poolCenter.x + Math.cos(a) * rad;
@@ -367,10 +366,11 @@ export class Terrarium {
 
     // กรวดเล็ก ๆ ริมน้ำ
     const pebble = new THREE.SphereGeometry(0.09, 6, 4);
+    const pebbleCount = Math.round(70 * Math.sqrt(areaScale));
     const pebbles = new THREE.InstancedMesh(pebble, new THREE.MeshStandardMaterial({
       color: 0xbaa78f, roughness: 0.85, flatShading: true,
-    }), 70);
-    for (let i = 0; i < 70; i++) {
+    }), pebbleCount);
+    for (let i = 0; i < pebbleCount; i++) {
       const a = rng() * Math.PI * 2;
       const rad = WORLD.poolRadius + 0.05 + rng() * 0.75;
       const x = WORLD.poolCenter.x + Math.cos(a) * rad;
@@ -382,74 +382,29 @@ export class Terrarium {
       OBJ.updateMatrix();
       pebbles.setMatrixAt(i, OBJ.matrix);
     }
+    pebbles.count = pebbleCount;
     pebbles.instanceMatrix.needsUpdate = true;
     group.add(pebbles);
 
     this.scene.add(group);
   }
 
-  // ------------------------------------------------------------------- glass
+  // ------------------------------------------------------------------- ขอบแผนที่
 
-  _buildGlass() {
-    const R = WORLD.radius + 0.55;
-    const profile = [
-      [R, -2.9], [R + 0.06, -2.2], [R + 0.06, 1.0], [R + 0.02, JAR_HEIGHT * 0.52],
-      [R - 0.28, JAR_HEIGHT * 0.72], [R - 1.25, JAR_HEIGHT * 0.9],
-      [R - 2.5, JAR_HEIGHT * 0.99], [R - 3.15, JAR_HEIGHT],
-    ].map(([x, y]) => new THREE.Vector2(x, y));
-
-    const geo = new THREE.LatheGeometry(profile, 80);
-    /**
-     * แก้วแบบ stylized: ใสจริง ๆ ไม่ใช้ transmission
-     * (transmission ทำให้ภาพในขวดขุ่นและกิน performance เพิ่มอีกหนึ่ง render pass)
-     * ความเป็นแก้วมาจากแผ่นใสบาง + ขอบ Fresnel + ไฮไลต์สะท้อน
-     */
-    this.glass = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({
-      color: 0xd6ece8,
-      roughness: 0.06,
-      metalness: 0,
-      transparent: true,
-      opacity: 0.12,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      envMapIntensity: 0.85,
-      specularIntensity: 0.6,
-    }));
-    this.glass.renderOrder = 2;
-    this.scene.add(this.glass);
-
-    // ขอบแก้วเรืองแสงแบบ Fresnel — ทำให้เห็นรูปทรงภาชนะชัดโดยไม่บังภาพข้างใน
-    const rimGeo = geo.clone();
-    rimGeo.scale(1.004, 1.002, 1.004);
-    this.glassRim = new THREE.Mesh(rimGeo, new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, side: THREE.BackSide,
-      blending: THREE.AdditiveBlending,
-      uniforms: { tint: { value: new THREE.Color(0xffd9a8) } },
-      vertexShader: `
-        varying vec3 vN; varying vec3 vV;
-        void main() {
-          vec4 wp = modelMatrix * vec4(position, 1.0);
-          vN = normalize(mat3(modelMatrix) * normal);
-          vV = normalize(cameraPosition - wp.xyz);
-          gl_Position = projectionMatrix * viewMatrix * wp;
-        }`,
-      fragmentShader: `
-        uniform vec3 tint; varying vec3 vN; varying vec3 vV;
-        void main() {
-          float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.6);
-          gl_FragColor = vec4(tint * f * 0.85, f);
-        }`,
-    }));
-    this.glassRim.renderOrder = 3;
-    this.scene.add(this.glassRim);
-
-    // ขอบปากขวดโลหะอุ่น ๆ
+  /**
+   * ขอบดินของเกาะ — เดิมตรงนี้เคยเป็นโหลแก้วครอบทั้งใบ
+   * ถอดออกแล้วเพื่อให้เป็นภูมิประเทศเปิดที่ซูมเข้าไปดูใกล้ ๆ ได้
+   * (วัฏจักรน้ำแบบภาชนะปิดยังทำงานเหมือนเดิมในซิมูเลชัน — ตอนนี้ตีความเป็นน้ำค้าง)
+   */
+  _buildEdge() {
+    const R = WORLD.radius;
     const rim = new THREE.Mesh(
-      new THREE.TorusGeometry(R - 3.15, 0.12, 10, 64),
-      new THREE.MeshStandardMaterial({ color: 0xc08a4a, roughness: 0.35, metalness: 0.65 }),
+      new THREE.TorusGeometry(R + 0.35, 0.3, 10, 120),
+      new THREE.MeshStandardMaterial({ color: PALETTE.baseRim, roughness: 0.75, metalness: 0.08 }),
     );
     rim.rotation.x = Math.PI / 2;
-    rim.position.y = JAR_HEIGHT;
+    rim.position.y = -0.15;
+    rim.receiveShadow = true;
     this.scene.add(rim);
   }
 
@@ -524,6 +479,49 @@ export class Terrarium {
    * ผู้ย่อยสลาย: กลุ่มเห็ดเล็ก 3 ดอกบนพื้นซาก
    * ทำเป็นกระจุกเพื่อให้เห็นชัดในระยะกล้องปกติ แม้แต่ละดอกจะเล็กมาก
    */
+  /**
+   * ต้นไม้ใหญ่ — ลำต้นเอียงเล็กน้อย กิ่งสามกิ่ง และพุ่มใบซ้อนกันหลายก้อน
+   * เรขาคณิตชิ้นนี้สูงราว 5.5 หน่วยที่ scale 1 แล้วค่อยย่อตามขนาดต้นจริง
+   */
+  _treeGeometry() {
+    const p = [];
+    const H = 3.4;
+    p.push(part(new THREE.CylinderGeometry(0.16, 0.42, H, 8), PALETTE.bark,
+      { pos: [0, H / 2, 0] }));
+    // พูพอนโคนต้น
+    p.push(part(new THREE.ConeGeometry(0.62, 0.7, 8), PALETTE.bark, { pos: [0, 0.3, 0] }));
+
+    const branches = [
+      { a: 0.4, h: 2.2, len: 1.25, tilt: 0.75 },
+      { a: 2.6, h: 2.6, len: 1.05, tilt: 0.66 },
+      { a: 4.6, h: 2.0, len: 1.15, tilt: 0.82 },
+    ];
+    for (const b of branches) {
+      const g = new THREE.CylinderGeometry(0.06, 0.13, b.len, 6);
+      g.translate(0, b.len / 2, 0);
+      g.rotateZ(b.tilt);
+      g.rotateY(b.a);
+      g.translate(0, b.h, 0);
+      p.push(tint(g, PALETTE.barkLight));
+    }
+
+    const blobs = [
+      { x: 0, y: 4.5, z: 0, r: 1.5, c: PALETTE.canopy },
+      { x: 1.05, y: 3.85, z: 0.35, r: 1.05, c: PALETTE.canopyLit },
+      { x: -0.95, y: 3.7, z: -0.55, r: 1.0, c: PALETTE.canopyDeep },
+      { x: 0.25, y: 3.5, z: 1.05, r: 0.92, c: PALETTE.canopyDeep },
+      { x: -0.3, y: 5.3, z: 0.4, r: 0.85, c: PALETTE.canopyLit },
+    ];
+    for (const b of blobs) {
+      // ต้องเป็น geometry แบบมี index เหมือนชิ้นอื่น ไม่งั้น mergeGeometries รวมไม่ได้
+      const g = new THREE.SphereGeometry(b.r, 9, 7);
+      g.scale(1, 0.82, 1);
+      g.translate(b.x, b.y, b.z);
+      p.push(tint(g, b.c));
+    }
+    return mergeGeometries(p, false);
+  }
+
   _fungusGeometry() {
     const p = [];
     const caps = [
@@ -560,16 +558,18 @@ export class Terrarium {
   }
 
   _buildCreatures() {
+    this.treeMesh = this._makeInstanced(this._treeGeometry(), CAPS.trees, 0.9);
     this.plantMesh = this._makeInstanced(this._plantGeometry(), CAPS.plants, 0.86);
     this.herbMesh = this._makeInstanced(this._herbivoreGeometry(), CAPS.herbivores, 0.72);
     this.predMesh = this._makeInstanced(this._predatorGeometry(), CAPS.predators, 0.68);
     this.fungusMesh = this._makeInstanced(this._fungusGeometry(), CAPS.fungi, 0.9);
+    this.treeMesh.name = 'tree';
     this.plantMesh.name = 'plant';
     this.herbMesh.name = 'herbivore';
     this.predMesh.name = 'predator';
     this.fungusMesh.name = 'fungus';
     // แผนที่ instance index -> id ของสิ่งมีชีวิต (ใช้ตอนคลิกเลือก)
-    this.ids = { plant: [], herbivore: [], predator: [], fungus: [] };
+    this.ids = { tree: [], plant: [], herbivore: [], predator: [], fungus: [] };
   }
 
   // --------------------------------------------------------------- selection
@@ -605,15 +605,16 @@ export class Terrarium {
 
   _buildWeather() {
     const rng = makeRng(4242);
+    const areaScaleOf = () => Math.min(4, WORLD_AREA / (Math.PI * 81));
     // ละอองฝุ่นลอยในภาชนะ ให้บรรยากาศดูมีชีวิต
-    const dustCount = 110;
+    const dustCount = Math.round(110 * areaScaleOf());
     const dustPos = new Float32Array(dustCount * 3);
     this.dustPhase = new Float32Array(dustCount);
     for (let i = 0; i < dustCount; i++) {
       const a = rng() * Math.PI * 2;
       const r = Math.sqrt(rng()) * (WORLD.radius - 0.6);
       dustPos[i * 3] = Math.cos(a) * r;
-      dustPos[i * 3 + 1] = 0.6 + rng() * (JAR_HEIGHT - 2.2);
+      dustPos[i * 3 + 1] = 0.6 + rng() * (SKY_HEIGHT - 2.2);
       dustPos[i * 3 + 2] = Math.sin(a) * r;
       this.dustPhase[i] = rng() * Math.PI * 2;
     }
@@ -626,14 +627,14 @@ export class Terrarium {
     this.scene.add(this.dust);
 
     // หยดฝน
-    const rainCount = 260;
+    const rainCount = Math.round(260 * areaScaleOf());
     const rainPos = new Float32Array(rainCount * 3);
     this.rainSpeed = new Float32Array(rainCount);
     for (let i = 0; i < rainCount; i++) {
       const a = rng() * Math.PI * 2;
       const r = Math.sqrt(rng()) * (WORLD.radius - 0.4);
       rainPos[i * 3] = Math.cos(a) * r;
-      rainPos[i * 3 + 1] = rng() * JAR_HEIGHT;
+      rainPos[i * 3 + 1] = rng() * SKY_HEIGHT;
       rainPos[i * 3 + 2] = Math.sin(a) * r;
       this.rainSpeed[i] = 6 + rng() * 5;
     }
@@ -652,6 +653,7 @@ export class Terrarium {
   /** วาดสถานะล่าสุดของซิมูเลชัน เรียกทุกเฟรม */
   update(sim, dtReal, selection) {
     const t = this.clock.getElapsedTime();
+    this._syncTrees(sim, t);
     this._syncPlants(sim, t);
     this._syncFungi(sim, t);
     this._syncAnimals(sim.herbivores, this.herbMesh, this.ids.herbivore, HERBIVORE, t);
@@ -660,6 +662,31 @@ export class Terrarium {
     this._syncWeather(sim, dtReal, t);
     this._syncDaylight(sim);
     this.controls.update();
+  }
+
+  _syncTrees(sim, t) {
+    const mesh = this.treeMesh;
+    const ids = this.ids.tree;
+    ids.length = 0;
+    const n = Math.min(sim.trees.length, CAPS.trees);
+    for (let i = 0; i < n; i++) {
+      const tr = sim.trees[i];
+      ids.push(tr.id);
+      const s = 0.16 + tr.size * 1.0;
+      const sway = Math.sin(t * 0.55 + tr.lean * 2) * 0.016;
+      OBJ.position.set(tr.x, this.groundHeight(tr.x, tr.z) - 0.12, tr.z);
+      OBJ.rotation.set(sway, tr.lean, sway * 0.7);
+      OBJ.scale.set(s, s * (0.9 + tr.health * 0.18), s);
+      OBJ.updateMatrix();
+      mesh.setMatrixAt(i, OBJ.matrix);
+      // ต้นขาดน้ำใบออกน้ำตาล ต้นสมบูรณ์ใบเขียวเข้ม
+      const dry = 1 - tr.health;
+      COL.setHSL(0.27 - dry * 0.14, 0.34 + dry * 0.2, 0.5 + tr.tint * 0.1 - dry * 0.08);
+      mesh.setColorAt(i, COL);
+    }
+    mesh.count = n;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
   _syncPlants(sim, t) {
@@ -748,8 +775,9 @@ export class Terrarium {
       return;
     }
     const y = this.groundHeight(entity.x, entity.z);
-    const scale = entity.kind === 'plant' ? 0.5 + entity.size * 0.7
-      : entity.kind === 'fungus' ? 0.45 + entity.size * 0.4 : 0.85;
+    const scale = entity.kind === 'tree' ? 1.6 + entity.size * 2.6
+      : entity.kind === 'plant' ? 0.5 + entity.size * 0.7
+        : entity.kind === 'fungus' ? 0.45 + entity.size * 0.4 : 0.85;
     this.selectRing.visible = true;
     this.selectRing.position.set(entity.x, y + 0.06, entity.z);
     this.selectRing.scale.setScalar(scale);
@@ -801,7 +829,7 @@ export class Terrarium {
       const ph = this.dustPhase[i] + t * 0.35;
       dust.array[i * 3 + 1] += Math.sin(ph) * 0.0032;
       dust.array[i * 3] += Math.cos(ph * 0.7) * 0.0026;
-      if (dust.array[i * 3 + 1] > JAR_HEIGHT - 1.4) dust.array[i * 3 + 1] = 0.5;
+      if (dust.array[i * 3 + 1] > SKY_HEIGHT - 1.4) dust.array[i * 3 + 1] = 0.5;
     }
     dust.needsUpdate = true;
 
@@ -810,7 +838,7 @@ export class Terrarium {
       const rp = this.rain.geometry.attributes.position;
       for (let i = 0; i < this.rainSpeed.length; i++) {
         rp.array[i * 3 + 1] -= this.rainSpeed[i] * dt;
-        if (rp.array[i * 3 + 1] < 0) rp.array[i * 3 + 1] = JAR_HEIGHT - 1.2;
+        if (rp.array[i * 3 + 1] < 0) rp.array[i * 3 + 1] = SKY_HEIGHT - 1.2;
       }
       rp.needsUpdate = true;
     }
@@ -858,7 +886,7 @@ export class Terrarium {
   pick(event) {
     this.raycaster.setFromCamera(this._ndc(event), this.camera);
     const hits = this.raycaster.intersectObjects(
-      [this.herbMesh, this.predMesh, this.plantMesh, this.fungusMesh], false);
+      [this.herbMesh, this.predMesh, this.plantMesh, this.fungusMesh, this.treeMesh], false);
     for (const hit of hits) {
       const kind = hit.object.name;
       const id = this.ids[kind]?.[hit.instanceId];
@@ -902,8 +930,8 @@ export class Terrarium {
   frameContents() {
     const portrait = this.camera.aspect < 1;
     // ครอบภาชนะทั้งใบด้วยทรงกลม แล้วคำนวณระยะกล้องให้พอดีทั้งแนวตั้งและแนวนอน
-    const bound = 12.4;
-    const centerY = 4.0;
+    const bound = WORLD.radius * 1.32;
+    const centerY = 2.0;
     const halfV = THREE.MathUtils.degToRad(this.camera.fov) / 2;
     const halfH = Math.atan(Math.tan(halfV) * this.camera.aspect);
     const dist = THREE.MathUtils.clamp(
@@ -911,7 +939,7 @@ export class Terrarium {
       this.controls.minDistance, this.controls.maxDistance,
     );
 
-    this.controls.target.set(0, portrait ? centerY : 3.2, 0);
+    this.controls.target.set(0, portrait ? centerY : 1.5, 0);
     const dir = new THREE.Vector3(0.52, 0.37, 0.77).normalize();
     this.camera.position.copy(this.controls.target).addScaledVector(dir, dist);
     this.controls.update();

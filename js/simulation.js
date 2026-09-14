@@ -12,7 +12,7 @@
 import { makeRng, hashSeed } from './rng.js';
 import {
   SIM_DT, WORLD, CAPS, COVER, PLANT, HERBIVORE, PREDATOR, FUNGUS,
-  MOISTURE, NUTRIENT, DETRITUS, EVOLUTION, SEASON, PRESETS,
+  MOISTURE, NUTRIENT, DETRITUS, EVOLUTION, SEASON, TREE, PRESETS,
 } from './config.js';
 
 const TAU = Math.PI * 2;
@@ -52,24 +52,31 @@ export class Ecosystem {
     this.time = 0;            // เวลาจำลอง (วินาที)
     this.steps = 0;
     this.nextId = 1;
+    this.trees = [];
     this.plants = [];
     this.herbivores = [];
     this.predators = [];
     this.fungi = [];
+    /**
+     * ดัชนี id -> เอนทิตี
+     * ก่อนหน้านี้การค้นหาเป้าหมายใช้ Array.find ทุก step ต่อสัตว์หนึ่งตัว
+     * ซึ่งเป็น O(จำนวนพืช) และจะระเบิดทันทีเมื่อขยายแผนที่
+     */
+    this.byId = new Map();
     this.rainTimer = 0;
     this.rainIntensity = 1;
     this.history = [];
     this.historyTimer = 0;
     this.events = [];
     this.totals = {
-      births: { plant: 0, herbivore: 0, predator: 0, fungus: 0 },
-      deaths: { plant: 0, herbivore: 0, predator: 0, fungus: 0 },
+      births: { plant: 0, herbivore: 0, predator: 0, fungus: 0, tree: 0 },
+      deaths: { plant: 0, herbivore: 0, predator: 0, fungus: 0, tree: 0 },
       eaten: { plant: 0, herbivore: 0 },
       recycled: 0,          // ธาตุอาหารที่ผู้ย่อยสลายคืนสู่ดินสะสม
     };
     /** สถิติสาเหตุการตายสะสม แยกตามชนิด */
     this.causes = {
-      plant: {}, herbivore: {}, predator: {}, fungus: {},
+      plant: {}, herbivore: {}, predator: {}, fungus: {}, tree: {},
     };
     /** บันทึกการตายล่าสุด ใช้ชันสูตรว่าช่วงก่อนสูญพันธุ์เกิดอะไรขึ้น */
     this.recentDeaths = [];
@@ -159,6 +166,12 @@ export class Ecosystem {
       const cj = clamp(Math.floor((p.z + WORLD.radius) / cell), 0, n - 1);
       g[cj * n + ci] += p.size;
     }
+    for (let i = 0; i < this.trees.length; i++) {
+      const t = this.trees[i];
+      const ci = clamp(Math.floor((t.x + WORLD.radius) / cell), 0, n - 1);
+      const cj = clamp(Math.floor((t.z + WORLD.radius) / cell), 0, n - 1);
+      g[cj * n + ci] += t.size * TREE.coverWeight;
+    }
     // เกลี่ยกับเพื่อนบ้านเล็กน้อยให้ขอบพุ่มไม้ไม่แข็งเกินไป
     const blurred = new Float32Array(g.length);
     for (let j = 0; j < n; j++) {
@@ -185,6 +198,11 @@ export class Ecosystem {
   }
 
   _seedWorld(start) {
+    // ต้นไม้ตั้งต้นกระจายห่าง ๆ ขนาดสุ่มตั้งแต่ต้นอ่อนถึงโตเต็มวัย
+    for (let i = 0; i < (start.trees || 0); i++) {
+      const p = this.randomSoilPoint(2.5);
+      this.addTree(p.x, p.z, this.rng.range(0.25, 1));
+    }
     for (let i = 0; i < start.plants; i++) {
       const p = this.randomSoilPoint(0.6);
       this.addPlant(p.x, p.z, this.rng.range(0.2, 0.85));
@@ -261,6 +279,7 @@ export class Ecosystem {
 
   get counts() {
     return {
+      trees: this.trees.length,
       plants: this.plants.length,
       herbivores: this.herbivores.length,
       predators: this.predators.length,
@@ -284,7 +303,27 @@ export class Ecosystem {
       health: 1,
     };
     this.plants.push(p);
+    this.byId.set(p.id, p);
     return p;
+  }
+
+  addTree(x, z, size = TREE.seedSize) {
+    if (this.trees.length >= CAPS.trees) return null;
+    if (this.isWater(x, z)) return null;
+    const t = {
+      id: this.nextId++, kind: 'tree', alive: true,
+      x, z,
+      size,
+      age: 0,
+      maxAge: TREE.maxAge * (0.75 + this.rng() * 0.5),
+      lean: this.rng() * TAU,
+      tint: this.rng(),
+      health: 1,
+      shed: 0,              // ใบร่วงสะสม (โชว์ในแผงข้อมูล)
+    };
+    this.trees.push(t);
+    this.byId.set(t.id, t);
+    return t;
   }
 
   addFungus(x, z, size = FUNGUS.seedSize) {
@@ -301,6 +340,7 @@ export class Ecosystem {
       digested: 0,          // ย่อยซากไปแล้วเท่าไร (โชว์ในแผงข้อมูล)
     };
     this.fungi.push(f);
+    this.byId.set(f.id, f);
     return f;
   }
 
@@ -308,6 +348,7 @@ export class Ecosystem {
     if (this.herbivores.length >= CAPS.herbivores) return null;
     const h = this._makeAnimal('herbivore', x, z, energy, HERBIVORE, gene);
     this.herbivores.push(h);
+    this.byId.set(h.id, h);
     return h;
   }
 
@@ -316,6 +357,7 @@ export class Ecosystem {
     const p = this._makeAnimal('predator', x, z, energy, PREDATOR, gene);
     p.home = home || this._claimTerritory(x, z) || { x, z };
     this.predators.push(p);
+    this.byId.set(p.id, p);
     return p;
   }
 
@@ -457,6 +499,7 @@ export class Ecosystem {
 
     this._stepMoisture(dt);
     this._stepSoilChemistry(dt);
+    this._stepTrees(dt);
     this._stepPlants(dt);
     this._stepFungi(dt);
     this._stepHerbivores(dt);
@@ -473,7 +516,7 @@ export class Ecosystem {
   /**
    * วัฏจักรน้ำแบบง่ายของภาชนะปิด:
    *   แอ่งน้ำ = แหล่งน้ำถาวร -> ซึมออกไปตามดิน -> ระเหยตามความชื้นที่มี
-   *   -> ส่วนใหญ่กลั่นตัวที่ผนังแก้วแล้วตกกลับลงดินอย่างสม่ำเสมอ
+   *   -> ส่วนใหญ่กลั่นตัวกลับลงดินเป็นน้ำค้างอย่างสม่ำเสมอ
    * ทำให้เกิดความชื้นไล่ระดับ (ใกล้แอ่งน้ำชื้นกว่า) และระบบอยู่ตัวได้นาน
    */
   /** ฤดูฝนมีฝนตกเองเป็นระยะ ยิ่งใกล้กลางฤดูฝนยิ่งบ่อย */
@@ -565,6 +608,69 @@ export class Ecosystem {
       }
     }
     this.nutrients.set(next);
+  }
+
+  /**
+   * ต้นไม้ใหญ่: โตช้า ทิ้งใบร่วงตลอดเวลา และแย่งน้ำ/ธาตุอาหารกับพืชเล็ก
+   * สัตว์กินพืชกินไม่ถึง จึงเป็นโครงสร้างถาวรของภูมิประเทศมากกว่าจะเป็นอาหาร
+   */
+  _stepTrees(dt) {
+    const canSeed = this.trees.length < CAPS.trees;
+    for (let i = 0; i < this.trees.length; i++) {
+      const t = this.trees[i];
+      t.age += dt;
+      const k = this.cellIndex(t.x, t.z);
+      const moist = this.moisture[k];
+
+      if (moist >= TREE.wiltMoisture) {
+        const fert = clamp(this.nutrients[k] / NUTRIENT.comfortable, 0, 1);
+        const grow = TREE.growthRate * moist * fert * t.size * (1 - t.size) * dt;
+        t.size = clamp(t.size + grow, 0, 1);
+        t.health = clamp(t.health + dt * 0.2, 0, 1);
+        this.moisture[k] = Math.max(0, moist - TREE.drinkRate * t.size * dt * (1 - this.poolMask[k]));
+        this.nutrients[k] = Math.max(0, this.nutrients[k] - grow * TREE.nutrientDraw);
+      } else {
+        const lack = (TREE.wiltMoisture - moist) / TREE.wiltMoisture;
+        t.size = Math.max(0, t.size - TREE.wiltRate * lack * dt);
+        t.health = clamp(t.health - dt * 0.25 * lack, 0, 1);
+      }
+
+      // ใบร่วงลงดินตลอดเวลา — นี่คือทางที่ต้นไม้ป้อนวงจรสารอาหาร
+      const litter = TREE.litterRate * t.size * dt;
+      this._addDetritus(t.x, t.z, litter);
+      t.shed += litter;
+
+      if (t.size < TREE.deathSize || t.age > t.maxAge) {
+        t.alive = false;
+        t.deathCause = t.age > t.maxAge ? 'old' : 'drought';
+        this._addDetritus(t.x, t.z, t.size * TREE.deadwood);
+        this.totals.deaths.tree++;
+        this._recordDeath('tree', t.deathCause);
+        continue;
+      }
+
+      if (canSeed && t.size > TREE.matureSize && this.rng() < TREE.seedRate * moist * dt) {
+        this._treeSeed(t);
+      }
+    }
+  }
+
+  _treeSeed(parent) {
+    const a = this.rng() * TAU;
+    const r = this.rng.range(TREE.seedRadius[0], TREE.seedRadius[1]);
+    const x = parent.x + Math.cos(a) * r;
+    const z = parent.z + Math.sin(a) * r;
+    if (x * x + z * z > (WORLD.radius - 1.5) ** 2) return;
+    if (this.isWater(x, z)) return;
+    if (this.moistureAt(x, z) < TREE.wiltMoisture) return;
+    let near = 0;
+    const rr = TREE.crowdRadius * TREE.crowdRadius;
+    for (let i = 0; i < this.trees.length; i++) {
+      if (dist2(this.trees[i].x, this.trees[i].z, x, z) < rr) {
+        if (++near > TREE.crowdLimit) return;
+      }
+    }
+    if (this.addTree(x, z)) this.totals.births.tree++;
   }
 
   _stepPlants(dt) {
@@ -971,7 +1077,7 @@ export class Ecosystem {
   }
 
   /**
-   * จุดหลบหนี: ปกติวิ่งออกตรงข้ามผู้ล่า แต่ถ้าทิศนั้นชนผนังแก้ว
+   * จุดหลบหนี: ปกติวิ่งออกตรงข้ามผู้ล่า แต่ถ้าทิศนั้นชนขอบเกาะ
    * จะเบนไปวิ่งเลียบขอบภาชนะแทน (ไม่งั้นจะถูกต้อนจนมุมและโดนจับง่ายเกินไป)
    */
   _escapePoint(h, threat) {
@@ -1051,8 +1157,15 @@ export class Ecosystem {
     return sum / list.length;
   }
 
-  _plantById(id) { return id == null ? null : this.plants.find((p) => p.id === id) || null; }
-  _herbById(id) { return id == null ? null : this.herbivores.find((h) => h.id === id) || null; }
+  /** ค้นเอนทิตีจากดัชนี — คืน null ถ้าไม่มีหรือชนิดไม่ตรง */
+  _byId(id, kind) {
+    if (id == null) return null;
+    const e = this.byId.get(id);
+    return e && e.kind === kind ? e : null;
+  }
+
+  _plantById(id) { return this._byId(id, 'plant'); }
+  _herbById(id) { return this._byId(id, 'herbivore'); }
 
   /** หาพืชที่คุ้มค่าที่สุด: ใกล้และตัวใหญ่ */
   _findPlant(h) {
@@ -1121,11 +1234,7 @@ export class Ecosystem {
 
   /** หาสิ่งมีชีวิตจาก id (ใช้ตอนผู้ใช้คลิกเลือก) */
   findById(id) {
-    return this.plants.find((p) => p.id === id)
-      || this.herbivores.find((h) => h.id === id)
-      || this.predators.find((p) => p.id === id)
-      || this.fungi.find((f) => f.id === id)
-      || null;
+    return this.byId.get(id) || null;
   }
 
   /** หาเป้าหมายปัจจุบันของสิ่งมีชีวิตในรูปพิกัด (สำหรับวาดเส้นเป้าหมาย) */
@@ -1134,17 +1243,29 @@ export class Ecosystem {
     const t = entity.target;
     if (t.kind === 'plant') { const p = this._plantById(t.id); return p ? { x: p.x, z: p.z, kind: t.kind } : null; }
     if (t.kind === 'herbivore') { const h = this._herbById(t.id); return h ? { x: h.x, z: h.z, kind: t.kind } : null; }
-    if (t.kind === 'flee') { const p = this.predators.find((q) => q.id === t.id); return p ? { x: p.x, z: p.z, kind: t.kind } : null; }
+    if (t.kind === 'flee') { const p = this._byId(t.id, 'predator'); return p ? { x: p.x, z: p.z, kind: t.kind } : null; }
     return { x: t.x, z: t.z, kind: 'point' };
   }
 
   // ------------------------------------------------------------------ cleanup
 
+  /** เอาตัวที่ตายออกจากทั้ง array และดัชนี */
+  _sweep(list) {
+    const kept = [];
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      if (e.alive) kept.push(e);
+      else this.byId.delete(e.id);
+    }
+    return kept;
+  }
+
   _cull() {
-    if (this.plants.some((p) => !p.alive)) this.plants = this.plants.filter((p) => p.alive);
-    if (this.fungi.some((f) => !f.alive)) this.fungi = this.fungi.filter((f) => f.alive);
+    if (this.plants.some((p) => !p.alive)) this.plants = this._sweep(this.plants);
+    if (this.trees.some((t) => !t.alive)) this.trees = this._sweep(this.trees);
+    if (this.fungi.some((f) => !f.alive)) this.fungi = this._sweep(this.fungi);
     if (this.herbivores.some((h) => !h.alive)) {
-      this.herbivores = this.herbivores.filter((h) => h.alive);
+      this.herbivores = this._sweep(this.herbivores);
       if (!this.herbivores.length && this.extinctAt.herbivore === null) {
         this.extinctAt.herbivore = this.time;
         const r = this._buildExtinctionReport('herbivore');
@@ -1152,7 +1273,7 @@ export class Ecosystem {
       }
     }
     if (this.predators.some((p) => !p.alive)) {
-      this.predators = this.predators.filter((p) => p.alive);
+      this.predators = this._sweep(this.predators);
       if (!this.predators.length && this.extinctAt.predator === null) {
         this.extinctAt.predator = this.time;
         const r = this._buildExtinctionReport('predator');
@@ -1164,6 +1285,7 @@ export class Ecosystem {
   _sampleHistory() {
     this.history.push({
       t: this.time,
+      trees: this.trees.length,
       plants: this.plants.length,
       herbivores: this.herbivores.length,
       predators: this.predators.length,

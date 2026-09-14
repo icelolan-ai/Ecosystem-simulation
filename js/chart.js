@@ -67,6 +67,7 @@ export class PopulationChart {
     // แต่ละกลุ่มมีสเกลของตัวเอง เพราะจำนวนต่างกันคนละระดับ
     // (พืชหลักร้อย สัตว์กินพืชหลักสิบ ผู้ล่าหลักหน่วย) ถ้าใช้แกนเดียวจะมองไม่เห็นผู้ล่าเลย
     const series = [
+      { key: 'trees', label: 'ต้นไม้ใหญ่', color: SPECIES_COLORS.tree, min: 8, area: true, weight: 0.6 },
       { key: 'plants', label: 'พืช', color: SPECIES_COLORS.plant, min: 20, area: true, weight: 1.05 },
       { key: 'herbivores', label: 'สัตว์กินพืช', color: SPECIES_COLORS.herbivore, min: 10, area: true, weight: 1 },
       { key: 'predators', label: 'ผู้ล่า', color: SPECIES_COLORS.predator, min: 4, area: true, weight: 0.85 },
@@ -225,7 +226,7 @@ export class PopulationChart {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const label = `${Math.round(best.t)} วิ · พืช ${best.plants} · กินพืช ${best.herbivores} · ผู้ล่า ${best.predators} · เห็ดรา ${best.fungi ?? 0}`;
+    const label = `${Math.round(best.t)} วิ · ต้นไม้ ${best.trees ?? 0} · พืช ${best.plants} · กินพืช ${best.herbivores} · ผู้ล่า ${best.predators} · เห็ดรา ${best.fungi ?? 0}`;
     ctx.font = '11px system-ui, sans-serif';
     const tw = ctx.measureText(label).width + 12;
     const bx = Math.min(Math.max(px - tw / 2, PAD.left), this.w - PAD.right - tw);

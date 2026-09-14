@@ -9,7 +9,16 @@
  * ก็ทำให้ระบบล่มได้เงียบ ๆ การตรวจชุดนี้คือตาข่ายกันพลาดของโปรเจกต์
  */
 import { Ecosystem } from '../js/simulation.js';
-import { SIM_DT, CAPS, PRESET_ORDER, PRESETS } from '../js/config.js';
+import { SIM_DT, CAPS, PRESET_ORDER, PRESETS, TREE, WORLD } from '../js/config.js';
+
+/** จุดตรวจที่กำบังแบบตายตัว — ตั้งใจไม่เรียก rng จะได้ไม่ไปรบกวนลำดับสุ่มของรันที่กำลังวัด */
+const COVER_PROBES = [];
+for (let a = 0; a < 24; a++) {
+  for (let k = 1; k <= 5; k++) {
+    const r = (WORLD.radius - 1.5) * (k / 5);
+    COVER_PROBES.push([Math.cos((a / 24) * Math.PI * 2) * r, Math.sin((a / 24) * Math.PI * 2) * r]);
+  }
+}
 
 /**
  * seed กลาง ๆ ที่ไม่ได้คัดมา — ใช้วัดเสถียรภาพของ "ระบบ" ไม่ใช่ของ seed ที่โชคดี
@@ -119,6 +128,48 @@ console.log('\n[2c] ผู้ย่อยสลายต้องทำงาน
   // ธาตุอาหารต้องไม่ไหลลงเหวจนดินจืดถาวร
   record('soil not exhausted', eco.averageNutrient() > 0.15,
     `ธาตุอาหารเฉลี่ยในดิน ${eco.averageNutrient().toFixed(3)} (เกณฑ์ > 0.15)`);
+}
+
+// ───────────────────────────── 2d. ต้นไม้ใหญ่ต้องมีผลจริง ไม่ใช่ฉากหลัง
+// (บทเรียนข้อ 2 ใน CLAUDE.md: กลไกใหม่เคยกลายเป็นของประดับมาแล้ว)
+console.log('\n[2d] ต้นไม้ใหญ่ต้องมีผลต่อระบบจริง');
+{
+  const eco = run('balanced', PRESETS.balanced.seed, 8).eco;
+  const mature = eco.trees.filter((t) => t.size > TREE.matureSize);
+  record('trees spread', eco.totals.births.tree > 0 && mature.length > 0,
+    `ต้นไม้ ${eco.trees.length} ต้น (โตเต็มวัย ${mature.length}) เกิดใหม่ ${eco.totals.births.tree} ต้น`);
+
+  // ใบร่วงจากต้นไม้ต้องเป็นสัดส่วนที่วัดได้ของซากที่ป้อนผู้ย่อยสลาย
+  const shed = eco.trees.reduce((a, t) => a + t.shed, 0);
+  record('tree litter feeds soil', shed > 5,
+    `ใบร่วงสะสมจากต้นที่ยังอยู่ ${shed.toFixed(1)} หน่วย (เกณฑ์ > 5)`);
+
+  // ทรงพุ่มต้องเป็นที่กำบังจริง: วัดตอนที่พื้นโล่งกำบังต่ำสุด (ช่วงพืชถูกเล็มเกลี้ยง)
+  // ใต้ทรงพุ่มต้องยังหนาอยู่ ไม่ใช่ตกตามพื้นโล่งไปด้วย
+  // ตั้ง TREE.coverWeight = 0 แล้วค่านี้จะตกจาก ~0.9 เหลือ ~0.02-0.22 ทุก seed ที่ลอง
+  const eco2 = new Ecosystem('balanced', PRESETS.balanced.seed);
+  let worstOpen = Infinity;
+  let underThen = 0;
+  const steps2 = Math.round((8 * 60) / SIM_DT);
+  for (let i = 0; i < steps2; i++) {
+    eco2.step();
+    if (i % 300 !== 0) continue;
+    const grown = eco2.trees.filter((t) => t.size > TREE.matureSize);
+    if (grown.length < 3) continue;
+    let open = 0;
+    let n = 0;
+    for (const [x, z] of COVER_PROBES) {
+      if (eco2.isWater(x, z)) continue;
+      open += eco2.coverAt(x, z); n++;
+    }
+    open /= n;
+    if (open < worstOpen) {
+      worstOpen = open;
+      underThen = grown.reduce((a, t) => a + eco2.coverAt(t.x, t.z), 0) / grown.length;
+    }
+  }
+  record('tree canopy is real cover', underThen > 0.6,
+    `ตอนพื้นโล่งกำบังต่ำสุด ${worstOpen.toFixed(3)} ใต้ทรงพุ่มยังอยู่ที่ ${underThen.toFixed(3)} (เกณฑ์ > 0.6)`);
 }
 
 // ───────────────────────────── 3. เพดานต้องไม่กลายเป็นที่นอนถาวรของประชากร
