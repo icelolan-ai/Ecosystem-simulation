@@ -43,11 +43,21 @@
           <div><strong id="statPreds">0</strong><small>ผู้ล่า</small></div>
           <em id="trendPreds">·</em>
         </div>
+        <div class="stat" data-kind="fungus">
+          <span class="dot"></span>
+          <div><strong id="statFungi">0</strong><small>ผู้ย่อยสลาย</small></div>
+          <em id="trendFungi">·</em>
+        </div>
       </div>
 
       <div class="meter">
         <div class="meter-head"><span>ความชื้นเฉลี่ยในดิน</span><b id="statMoisture">0%</b></div>
         <div class="meter-track"><i id="barMoisture"></i></div>
+      </div>
+
+      <div class="meter">
+        <div class="meter-head"><span>ธาตุอาหารในดิน</span><b id="statNutrient" class="nutrient">0%</b></div>
+        <div class="meter-track"><i id="barNutrient"></i></div>
       </div>
 
       <div class="mini-grid">
@@ -72,6 +82,7 @@
         <span data-kind="plant">พืช</span>
         <span data-kind="herbivore">สัตว์กินพืช</span>
         <span data-kind="predator">ผู้ล่า</span>
+        <span data-kind="fungus">ผู้ย่อยสลาย</span>
         <span data-kind="moisture">ความชื้น / ฝน</span>
       </div>
       <p class="note">กราฟอ้างอิงข้อมูลจากซิมูเลชันจริง บันทึกทุก 1 วินาทีจำลอง</p>
@@ -134,6 +145,9 @@
           <li><b>สัตว์กินพืช</b> — เดินหาพืช เล็มแต่ไม่ถอนทั้งต้น หนีผู้ล่า และพักเมื่ออิ่ม</li>
           <li><b>ผู้ล่า</b> — ล่าเหยื่อที่เคลื่อนไหว จับได้ตอนเหยื่อเผลอกินหญ้า หวงอาณาเขตจึงมีจำนวนจำกัด</li>
           <li><b>พุ่มไม้</b> — ยิ่งรก ยิ่งเป็นที่กำบังให้เหยื่อรอด เป็นวงจรที่ทำให้ระบบไม่ล่มง่าย</li>
+          <li><b>ผู้ย่อยสลาย</b> — เห็ดราขึ้นบนซากและมูลสัตว์ ย่อยแล้วคืนธาตุอาหารลงดิน
+            จำนวนเห็ดราจึงสะท้อนว่าเพิ่งมีความตายมากแค่ไหน</li>
+          <li><b>ธาตุอาหาร</b> — พืชโตได้เท่าที่ดินมีให้ ถ้าวงจรย่อยสลายหยุด ดินจะจืดและพืชจะโตไม่ขึ้น</li>
           <li><b>เพดานจำนวน</b> — จำกัดไว้เพื่อคุม performance ไม่ใช่ตัวควบคุมหลักของระบบ</li>
         </ul>
         <p class="note">ใช้ fixed timestep (30 ครั้ง/วินาทีจำลอง) และ seeded randomness จึงทดลองซ้ำได้</p>

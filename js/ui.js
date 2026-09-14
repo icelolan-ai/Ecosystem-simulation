@@ -2,7 +2,10 @@
  * แผงควบคุมและการแสดงผลฝั่ง DOM
  * รับ callback จาก main.js แล้วอัปเดตตัวเลขจากสถานะซิมูเลชันจริง
  */
-import { PRESETS, PRESET_ORDER, SPECIES_COLORS, SECONDS_PER_DAY, HERBIVORE, PREDATOR, PLANT } from './config.js';
+import {
+  PRESETS, PRESET_ORDER, SPECIES_COLORS, SECONDS_PER_DAY,
+  HERBIVORE, PREDATOR, PLANT, FUNGUS, NUTRIENT,
+} from './config.js';
 
 const STATE_LABEL = {
   wander: 'เดินสำรวจ',
@@ -17,6 +20,7 @@ const KIND_LABEL = {
   plant: 'พืช',
   herbivore: 'สัตว์กินพืช',
   predator: 'ผู้ล่า',
+  fungus: 'ผู้ย่อยสลาย',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -31,9 +35,11 @@ export class UI {
   constructor(handlers) {
     this.h = handlers;
     this.el = {
-      plants: $('statPlants'), herbs: $('statHerbs'), preds: $('statPreds'),
-      trendPlants: $('trendPlants'), trendHerbs: $('trendHerbs'), trendPreds: $('trendPreds'),
+      plants: $('statPlants'), herbs: $('statHerbs'), preds: $('statPreds'), fungi: $('statFungi'),
+      trendPlants: $('trendPlants'), trendHerbs: $('trendHerbs'),
+      trendPreds: $('trendPreds'), trendFungi: $('trendFungi'),
       moisture: $('statMoisture'), bar: $('barMoisture'),
+      nutrient: $('statNutrient'), barNutrient: $('barNutrient'),
       time: $('statTime'), day: $('statDay'), speed: $('statSpeed'), state: $('statState'),
       inspector: $('inspector'), toast: $('toast'),
       play: $('btnPlay'), plant: $('btnPlant'), hint: $('actionHint'),
@@ -134,14 +140,20 @@ export class UI {
     this.el.plants.textContent = c.plants;
     this.el.herbs.textContent = c.herbivores;
     this.el.preds.textContent = c.predators;
+    this.el.fungi.textContent = c.fungi;
 
     this._trend(this.el.trendPlants, sim, 'plants');
     this._trend(this.el.trendHerbs, sim, 'herbivores');
     this._trend(this.el.trendPreds, sim, 'predators');
+    this._trend(this.el.trendFungi, sim, 'fungi');
 
     const moist = sim.averageMoisture();
     this.el.moisture.textContent = `${Math.round(moist * 100)}%`;
     this.el.bar.style.width = `${Math.round(moist * 100)}%`;
+
+    const nutrient = sim.averageNutrient();
+    this.el.nutrient.textContent = `${Math.round(nutrient * 100)}%`;
+    this.el.barNutrient.style.width = `${Math.round(nutrient * 100)}%`;
 
     this.el.time.textContent = fmtTime(sim.time);
     this.el.day.textContent = String(Math.floor(sim.time / SECONDS_PER_DAY) + 1);
@@ -177,7 +189,9 @@ export class UI {
       return;
     }
     box.classList.remove('empty');
-    box.innerHTML = e.kind === 'plant' ? this._plantCard(sim, e) : this._animalCard(sim, e);
+    box.innerHTML = e.kind === 'plant' ? this._plantCard(sim, e)
+      : e.kind === 'fungus' ? this._fungusCard(sim, e)
+        : this._animalCard(sim, e);
   }
 
   _bar(label, value, max, color, text) {
@@ -198,19 +212,40 @@ export class UI {
 
   _plantCard(sim, p) {
     const moist = sim.moistureAt(p.x, p.z);
+    const nutrient = sim.nutrientAt(p.x, p.z);
+    const fert = Math.min(1, nutrient / NUTRIENT.comfortable);
     const status = moist < PLANT.wiltMoisture ? 'ขาดน้ำ กำลังเหี่ยว'
-      : p.size > PLANT.matureSize + 0.08 ? 'โตเต็มที่ พร้อมแพร่พันธุ์'
-        : 'กำลังเติบโต';
+      : fert < 0.6 ? 'ดินจืด โตได้ช้ากว่าปกติ'
+        : p.size > PLANT.matureSize + 0.08 ? 'โตเต็มที่ พร้อมแพร่พันธุ์'
+          : 'กำลังเติบโต';
     return `${this._head(p)}
       ${this._bar('ขนาด', p.size, 1, SPECIES_COLORS.plant, `${Math.round(p.size * 100)}%`)}
       ${this._bar('ความสมบูรณ์', p.health, 1, '#9ad46f', `${Math.round(p.health * 100)}%`)}
       ${this._bar('ความชื้นที่จุดนี้', moist, 1, SPECIES_COLORS.moisture, `${Math.round(moist * 100)}%`)}
+      ${this._bar('ธาตุอาหารที่จุดนี้', nutrient, 1, SPECIES_COLORS.fungus, `${Math.round(nutrient * 100)}%`)}
       <div class="insp-facts">
         <div><small>อายุ</small><b>${p.age.toFixed(0)} / ${p.maxAge.toFixed(0)} วิ</b></div>
         <div><small>ที่กำบังรอบตัว</small><b>${Math.round(sim.coverAt(p.x, p.z) * 100)}%</b></div>
       </div>
       <div class="insp-target">สถานะ: <b>${status}</b><br>
         พืชไม่เคลื่อนที่ จึงไม่มีเป้าหมายการเดินทาง — เติบโตตามความชื้นในดินตรงจุดที่งอก</div>`;
+  }
+
+  _fungusCard(sim, f) {
+    const detritus = sim.detritusAt(f.x, f.z);
+    const nutrient = sim.nutrientAt(f.x, f.z);
+    const status = detritus > 0.01 ? 'กำลังย่อยซาก' : 'ไม่มีซากเหลือแล้ว กำลังฝ่อ';
+    return `${this._head(f)}
+      ${this._bar('ขนาดดอก', f.size, 1, SPECIES_COLORS.fungus, `${Math.round(f.size * 100)}%`)}
+      ${this._bar('ซากในบริเวณนี้', detritus, 0.6, '#b08968', detritus.toFixed(2))}
+      ${this._bar('ธาตุอาหารที่จุดนี้', nutrient, 1, SPECIES_COLORS.fungus, `${Math.round(nutrient * 100)}%`)}
+      <div class="insp-facts">
+        <div><small>อายุ</small><b>${f.age.toFixed(0)} / ${f.maxAge.toFixed(0)} วิ</b></div>
+        <div><small>ย่อยไปแล้ว</small><b>${f.digested.toFixed(2)} หน่วย</b></div>
+      </div>
+      <div class="insp-target">สถานะ: <b>${status}</b><br>
+        ผู้ย่อยสลายอยู่กับที่เหมือนพืช จึงไม่มีเป้าหมายการเดินทาง —
+        กินซากและมูลสัตว์ในบริเวณนั้น แล้วคืนธาตุอาหารกลับลงดินให้พืชใช้ต่อ</div>`;
   }
 
   _animalCard(sim, a) {
